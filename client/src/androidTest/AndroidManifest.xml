@@ -1,0 +1,5 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android" xmlns:tools="http://schemas.android.com/tools">
+    <application android:theme="@style/CourtsideTheme" android:label="羽序测试" android:usesCleartextTraffic="true" tools:replace="android:theme,android:usesCleartextTraffic">
+        <activity android:name="androidx.activity.ComponentActivity" android:theme="@style/CourtsideTheme" android:exported="true" tools:replace="android:theme" />
+    </application>
+</manifest>

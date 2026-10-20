@@ -1,0 +1,13 @@
+.git
+.idea
+.gradle
+.env
+local.properties
+dist
+docs
+*.docx
+*.md
+**/build
+organizer
+referee
+client

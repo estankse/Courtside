@@ -1,0 +1,31 @@
+services:
+  mysql:
+    image: mysql:8.4
+    restart: unless-stopped
+    environment:
+      MYSQL_DATABASE: courtside
+      MYSQL_USER: courtside
+      MYSQL_PASSWORD: ${DB_PASSWORD:?Set DB_PASSWORD in .env}
+      MYSQL_ROOT_PASSWORD: ${DB_ROOT_PASSWORD:?Set DB_ROOT_PASSWORD in .env}
+    volumes:
+      - courtside-db:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+  server:
+    build: .
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    environment:
+      DATABASE_URL: jdbc:mysql://mysql:3306/courtside?useUnicode=true&characterEncoding=UTF-8&serverTimezone=UTC
+      DATABASE_USER: courtside
+      DATABASE_PASSWORD: ${DB_PASSWORD}
+      SEED_DEMO: ${SEED_DEMO:-true}
+    depends_on:
+      mysql:
+        condition: service_healthy
+volumes:
+  courtside-db:

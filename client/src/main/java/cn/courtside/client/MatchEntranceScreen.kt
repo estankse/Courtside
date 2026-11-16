@@ -243,7 +243,7 @@ private fun EntranceSide(
     val accent = if (side == 0) Blue else Rose
     val edge = if (side == 0) -1f else 1f
     val rightAligned = wide && side == 1
-    BoxWithConstraints(
+    Box(
         modifier
             .graphicsLayer {
                 translationX = edge * (1f - reveal) * size.width

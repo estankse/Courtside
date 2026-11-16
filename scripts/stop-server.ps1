@@ -1,4 +1,4 @@
-$ErrorActionPreference = 'Stop'
+﻿$ErrorActionPreference = 'Stop'
 $projectRoot = Split-Path -Parent $PSScriptRoot
 $pidFile = Join-Path (Split-Path -Parent $projectRoot) 'tmp\courtside-server.pid'
 if (-not (Test-Path -LiteralPath $pidFile)) { Write-Output '没有本脚本启动的后台服务记录'; exit 0 }

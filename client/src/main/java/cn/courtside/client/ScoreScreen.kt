@@ -21,10 +21,12 @@ import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.*
 import androidx.compose.ui.semantics.*
 import androidx.compose.ui.text.*
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.*
 import androidx.compose.ui.unit.*
 import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import cn.courtside.shared.Models.*
 import cn.courtside.shared.Scoring
 import kotlinx.coroutines.delay
@@ -53,105 +55,164 @@ fun ScoreScreen(state: UiState, vm: CourtsideViewModel) {
             s.breakUntil <= System.currentTimeMillis()
     val fg = if (bright) Ink else Paper
     val muted = if (bright) Color(0xFF526477) else Soft
-    Column(
-        Modifier.fillMaxSize()
-            .background(if (bright) Color(0xFFEAF0F4) else Ink)
-            .padding(horizontal = 16.dp, vertical = 6.dp),
-        verticalArrangement = Arrangement.spacedBy(10.dp),
-    ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            IconButton(onClick = { vm.navigate("home") }) {
-                Icon(Icons.Outlined.ArrowBack, "保存并返回工作台", tint = fg)
-            }
-            Column(Modifier.weight(1f)) {
-                Text(m.court, fontSize = 17.sp, fontWeight = FontWeight.Bold, color = fg)
-                Text("${m.round} · 第 ${s.games.size+1} 局", fontSize = 10.sp, color = muted)
-            }
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(5.dp),
-            ) {
-                Icon(
-                    if (state.online) Icons.Outlined.CloudDone else Icons.Outlined.CloudOff,
-                    null,
-                    tint =
-                        if (state.online) {
-                            if (bright) Color(0xFF366637) else Lime
-                        } else {
-                            if (bright) Color(0xFFAA3156) else Rose
-                        },
-                    modifier = Modifier.size(15.dp),
-                )
-                Text(if (state.online) "本机已保存" else "离线计分", color = muted, fontSize = 10.sp)
-            }
-            IconButton(onClick = { bright = !bright }) {
-                Icon(
-                    if (bright) Icons.Outlined.DarkMode else Icons.Outlined.LightMode,
-                    "切换明暗计分模式",
-                    tint = fg,
-                )
-            }
-        }
-        Row(
-            Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.Center,
-            verticalAlignment = Alignment.CenterVertically,
+    BoxWithConstraints(Modifier.fillMaxSize().background(if (bright) Color(0xFFEAF0F4) else Ink)) {
+        val landscape = maxWidth > maxHeight
+        Column(
+            Modifier.fillMaxSize()
+                .padding(
+                    horizontal = if (landscape) 12.dp else 16.dp,
+                    vertical = if (landscape) 4.dp else 6.dp,
+                ),
+            verticalArrangement = Arrangement.spacedBy(if (landscape) 6.dp else 10.dp),
         ) {
-            Text("${m.rules.target} 分制", color = muted, fontSize = 11.sp)
-            Text("  /  ", color = muted)
-            Text(
-                "${m.rules.gamesToWin*2-1} 局 ${m.rules.gamesToWin} 胜",
-                color = muted,
-                fontSize = 11.sp,
-            )
-            if (a >= m.rules.target - 1 && b >= m.rules.target - 1)
-                Text(
-                    "   加时赛",
-                    color = if (bright) Color(0xFF1A5A90) else Lime,
-                    fontSize = 12.sp,
-                    fontWeight = FontWeight.Bold,
-                )
-        }
-        BoxWithConstraints(Modifier.weight(1f).fillMaxWidth()) {
-            val compact = maxHeight < 300.dp
-            Row(Modifier.fillMaxSize(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                val order = if (s.swapped) listOf(1, 0) else listOf(0, 1)
-                order.forEach { side ->
-                    PlayerScore(
-                        m,
-                        s,
-                        side,
-                        active,
-                        bright,
-                        compact,
-                        Modifier.weight(1f).fillMaxHeight(),
-                    ) {
-                        vm.add(side)
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                IconButton(onClick = { vm.navigate("home") }) {
+                    Icon(Icons.Outlined.ArrowBack, "保存并返回工作台", tint = fg)
+                }
+                Column(Modifier.weight(1f)) {
+                    Text(
+                        m.court,
+                        fontSize = if (landscape) 14.sp else 17.sp,
+                        lineHeight = if (landscape) 18.sp else TextUnit.Unspecified,
+                        maxLines = if (landscape) 1 else Int.MAX_VALUE,
+                        overflow = TextOverflow.Ellipsis,
+                        fontWeight = FontWeight.Bold,
+                        color = fg,
+                    )
+                    Text(
+                        "${m.round} · 第 ${s.games.size+1} 局",
+                        fontSize = 10.sp,
+                        color = muted,
+                        lineHeight = if (landscape) 14.sp else TextUnit.Unspecified,
+                        maxLines = if (landscape) 1 else Int.MAX_VALUE,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+                if (landscape) {
+                    Text(
+                        "${m.rules.target} 分制  ·  ${m.rules.gamesToWin*2-1} 局 ${m.rules.gamesToWin} 胜" +
+                            if (a >= m.rules.target - 1 && b >= m.rules.target - 1) "  ·  加时赛"
+                            else "",
+                        color = muted,
+                        fontSize = 11.sp,
+                        lineHeight = 14.sp,
+                        modifier = Modifier.padding(horizontal = 14.dp),
+                    )
+                }
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(5.dp),
+                ) {
+                    Icon(
+                        if (state.online) Icons.Outlined.CloudDone else Icons.Outlined.CloudOff,
+                        null,
+                        tint =
+                            if (state.online) {
+                                if (bright) Color(0xFF366637) else Lime
+                            } else {
+                                if (bright) Color(0xFFAA3156) else Rose
+                            },
+                        modifier = Modifier.size(15.dp),
+                    )
+                    Text(if (state.online) "本机已保存" else "离线计分", color = muted, fontSize = 10.sp)
+                }
+                IconButton(onClick = { bright = !bright }) {
+                    Icon(
+                        if (bright) Icons.Outlined.DarkMode else Icons.Outlined.LightMode,
+                        "切换明暗计分模式",
+                        tint = fg,
+                    )
+                }
+            }
+            if (!landscape)
+                Row(
+                    Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.Center,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text("${m.rules.target} 分制", color = muted, fontSize = 11.sp)
+                    Text("  /  ", color = muted)
+                    Text(
+                        "${m.rules.gamesToWin*2-1} 局 ${m.rules.gamesToWin} 胜",
+                        color = muted,
+                        fontSize = 11.sp,
+                    )
+                    if (a >= m.rules.target - 1 && b >= m.rules.target - 1)
+                        Text(
+                            "   加时赛",
+                            color = if (bright) Color(0xFF1A5A90) else Lime,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Bold,
+                        )
+                }
+            BoxWithConstraints(Modifier.weight(1f).fillMaxWidth()) {
+                val compact = maxHeight < 300.dp
+                Row(Modifier.fillMaxSize(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    val order = if (s.swapped) listOf(1, 0) else listOf(0, 1)
+                    order.forEach { side ->
+                        PlayerScore(
+                            m,
+                            s,
+                            side,
+                            active,
+                            bright,
+                            compact,
+                            landscape,
+                            Modifier.weight(1f).fillMaxHeight(),
+                        ) {
+                            vm.add(side)
+                        }
                     }
                 }
             }
-        }
-        Row(
-            Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceEvenly,
-        ) {
-            ScoreTool(Icons.Outlined.Undo, "撤销", s.rallies.isNotEmpty() && !s.submitted, muted) {
-                vm.undo()
+            Row(
+                Modifier.fillMaxWidth()
+                    .then(
+                        if (landscape)
+                            Modifier.background(
+                                if (bright) Color.White.copy(alpha = .6f)
+                                else PanelColor.copy(alpha = .6f),
+                                RoundedCornerShape(14.dp),
+                            )
+                        else Modifier
+                    ),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceEvenly,
+            ) {
+                ScoreTool(
+                    Icons.Outlined.Undo,
+                    "撤销",
+                    s.rallies.isNotEmpty() && !s.submitted,
+                    muted,
+                    landscape,
+                ) {
+                    vm.undo()
+                }
+                ScoreTool(Icons.Outlined.SwapHoriz, "交换显示", !s.submitted, muted, landscape) {
+                    vm.swap()
+                }
+                ScoreTool(
+                    Icons.Outlined.Flag,
+                    "弃权处理",
+                    !s.submitted && !complete,
+                    muted,
+                    landscape,
+                ) {
+                    retire = true
+                }
+                ScoreTool(Icons.Outlined.Save, "保存返回", true, muted, landscape) {
+                    vm.navigate("home")
+                }
             }
-            ScoreTool(Icons.Outlined.SwapHoriz, "交换显示", !s.submitted, muted) { vm.swap() }
-            ScoreTool(Icons.Outlined.Flag, "弃权处理", !s.submitted && !complete, muted) {
-                retire = true
-            }
-            ScoreTool(Icons.Outlined.Save, "保存返回", true, muted) { vm.navigate("home") }
+            if (!landscape)
+                Text(
+                    "点击对应一侧记 1 分 · 长亮屏幕 · 操作自动保存",
+                    color = muted,
+                    fontSize = 10.sp,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier.fillMaxWidth().padding(bottom = 4.dp),
+                )
         }
-        Text(
-            "点击对应一侧记 1 分 · 长亮屏幕 · 操作自动保存",
-            color = muted,
-            fontSize = 10.sp,
-            textAlign = TextAlign.Center,
-            modifier = Modifier.fillMaxWidth().padding(bottom = 4.dp),
-        )
     }
     if (s.breakUntil > 0 && !complete) BreakDialog(s, m) { vm.endBreak() }
     if (over && !s.submitted)
@@ -188,6 +249,7 @@ private fun PlayerScore(
     enabled: Boolean,
     bright: Boolean,
     compact: Boolean,
+    landscape: Boolean,
     modifier: Modifier,
     onScore: () -> Unit,
 ) {
@@ -236,18 +298,30 @@ private fun PlayerScore(
             }
             .semantics { contentDescription = "$name 加一分，当前 $score 分" }
     ) {
-        val numberSize =
-            minOf(maxWidth.value * .66f, if (compact) maxHeight.value * .35f else 128f)
-                .coerceAtLeast(40f)
+        RefereeScoreArt(side, bright, compact, Modifier.matchParentSize(), landscape)
+        val shortCard = maxHeight < 210.dp
+        val condensed = landscape || shortCard
         Column(
-            Modifier.fillMaxSize().padding(if (compact) 12.dp else 16.dp),
+            Modifier.fillMaxSize().padding(if (shortCard) 8.dp else if (compact) 12.dp else 16.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                Eyebrow(
+                Text(
                     if (side == 0) "SIDE / A" else "SIDE / B",
-                    if (bright) darkAccent else accent,
+                    color = if (bright) darkAccent else accent,
+                    fontSize = 10.sp,
+                    lineHeight = if (condensed) 12.sp else TextUnit.Unspecified,
+                    fontWeight = FontWeight.Bold,
+                    letterSpacing = 1.8.sp,
                 )
+                if (shortCard && !landscape)
+                    Text(
+                        "＋1",
+                        color = if (bright) darkAccent else accent,
+                        fontSize = 10.sp,
+                        lineHeight = 12.sp,
+                        modifier = Modifier.padding(start = 8.dp),
+                    )
                 Spacer(Modifier.weight(1f))
                 repeat(m.rules.gamesToWin) { i ->
                     Box(
@@ -261,13 +335,17 @@ private fun PlayerScore(
                     )
                 }
             }
-            Spacer(Modifier.height(if (compact) 6.dp else 18.dp))
+            Spacer(Modifier.height(if (condensed) 4.dp else if (compact) 6.dp else 18.dp))
             Text(
                 name,
                 color = if (bright) Ink else Paper,
-                fontSize = if (compact) 24.sp else 31.sp,
+                fontSize =
+                    if (shortCard) 20.sp
+                    else if (landscape) 26.sp else if (compact) 24.sp else 31.sp,
+                lineHeight =
+                    if (shortCard) 22.sp else if (landscape) 30.sp else TextUnit.Unspecified,
                 fontFamily = PlayerScript,
-                maxLines = 2,
+                maxLines = if (condensed) 1 else 2,
                 overflow = TextOverflow.Ellipsis,
                 textAlign = TextAlign.Center,
             )
@@ -279,7 +357,17 @@ private fun PlayerScore(
                     maxLines = 1,
                     modifier = Modifier.padding(top = 4.dp),
                 )
-            Box(Modifier.weight(1f), contentAlignment = Alignment.Center) {
+            BoxWithConstraints(
+                Modifier.weight(1f).fillMaxWidth(),
+                contentAlignment = Alignment.Center,
+            ) {
+                val numberSize =
+                    minOf(
+                            maxWidth.value * .66f,
+                            maxHeight.value * .82f,
+                            if (landscape) 200f else 128f,
+                        )
+                        .coerceAtLeast(24f)
                 AnimatedContent(
                     score,
                     label = "score",
@@ -303,36 +391,61 @@ private fun PlayerScore(
                     pointLabel,
                     color = if (bright) darkAccent else accent,
                     fontSize = if (compact) 8.sp else 10.sp,
+                    lineHeight = if (condensed) 10.sp else TextUnit.Unspecified,
                     fontWeight = FontWeight.Bold,
-                    modifier = Modifier.padding(bottom = 6.dp),
+                    modifier = Modifier.padding(bottom = if (condensed) 2.dp else 6.dp),
                     maxLines = 1,
                 )
             Row(
-                Modifier.clip(CircleShape)
-                    .background(accent.copy(alpha = if (serving) .16f else .04f))
-                    .padding(horizontal = 9.dp, vertical = 6.dp),
-                horizontalArrangement = Arrangement.spacedBy(4.dp),
+                if (landscape) Modifier.fillMaxWidth() else Modifier,
+                horizontalArrangement =
+                    if (landscape) Arrangement.SpaceBetween else Arrangement.Center,
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                Icon(
-                    if (serving) Icons.Outlined.SportsTennis else Icons.Outlined.Remove,
-                    null,
-                    Modifier.size(12.dp),
-                    tint = if (bright) darkAccent else accent,
-                )
+                Row(
+                    Modifier.clip(CircleShape)
+                        .background(accent.copy(alpha = if (serving) .16f else .04f))
+                        .padding(horizontal = 9.dp, vertical = if (condensed) 2.dp else 6.dp),
+                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Icon(
+                        if (serving) Icons.Outlined.SportsTennis else Icons.Outlined.Remove,
+                        null,
+                        Modifier.size(12.dp),
+                        tint = if (bright) darkAccent else accent,
+                    )
+                    Text(
+                        if (serving) "发球 · ${if(score%2==0)"右区" else "左区"}" else "接发球",
+                        color = if (bright) darkAccent else accent,
+                        fontSize = 10.sp,
+                        lineHeight = if (condensed) 12.sp else TextUnit.Unspecified,
+                    )
+                }
+                if (landscape)
+                    Text(
+                        "＋1",
+                        color = if (bright) darkAccent else accent,
+                        fontSize = 20.sp,
+                        lineHeight = 24.sp,
+                        fontWeight = FontWeight.Bold,
+                        modifier =
+                            Modifier.background(
+                                    accent.copy(alpha = .14f),
+                                    CutCornerShape(topEnd = 8.dp, bottomStart = 8.dp),
+                                )
+                                .padding(horizontal = 14.dp, vertical = 6.dp),
+                    )
+            }
+            if (!shortCard && !landscape) {
+                Spacer(Modifier.height(if (compact) 5.dp else 16.dp))
                 Text(
-                    if (serving) "发球 · ${if(score%2==0)"右区" else "左区"}" else "接发球",
+                    "＋ 1",
                     color = if (bright) darkAccent else accent,
-                    fontSize = 10.sp,
+                    fontSize = if (compact) 17.sp else 23.sp,
+                    fontWeight = FontWeight.Bold,
                 )
             }
-            Spacer(Modifier.height(if (compact) 5.dp else 16.dp))
-            Text(
-                "＋ 1",
-                color = if (bright) darkAccent else accent,
-                fontSize = if (compact) 17.sp else 23.sp,
-                fontWeight = FontWeight.Bold,
-            )
         }
     }
 }
@@ -343,8 +456,34 @@ private fun ScoreTool(
     label: String,
     enabled: Boolean,
     color: Color = Soft,
+    compact: Boolean = false,
     onClick: () -> Unit,
 ) {
+    if (compact) {
+        Row(
+            Modifier.heightIn(min = 48.dp)
+                .widthIn(min = 80.dp)
+                .clip(RoundedCornerShape(12.dp))
+                .clickable(enabled = enabled, onClick = onClick)
+                .padding(horizontal = 14.dp, vertical = 8.dp),
+            horizontalArrangement = Arrangement.spacedBy(7.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Icon(
+                icon,
+                label,
+                Modifier.size(19.dp),
+                tint = if (enabled) color else color.copy(alpha = .3f),
+            )
+            Text(
+                label,
+                color = if (enabled) color else color.copy(alpha = .3f),
+                fontSize = 11.sp,
+                lineHeight = 14.sp,
+            )
+        }
+        return
+    }
     Column(
         Modifier.widthIn(min = 62.dp)
             .clip(RoundedCornerShape(12.dp))
@@ -384,24 +523,111 @@ private fun BreakDialog(s: ScoreSession, m: Match, onFinish: () -> Unit) {
             delay(250)
         }
     }
-    Dialog(onDismissRequest = {}) {
-        Panel {
+    Dialog(onDismissRequest = {}, properties = DialogProperties(usePlatformDefaultWidth = false)) {
+        BoxWithConstraints(Modifier.padding(horizontal = 20.dp, vertical = 16.dp)) {
+            val wide = maxWidth > 560.dp
+            Column(
+                Modifier.widthIn(max = 640.dp)
+                    .fillMaxWidth()
+                    .heightIn(max = maxHeight)
+                    .clip(RoundedCornerShape(26.dp))
+                    .background(PanelColor)
+                    .border(1.dp, Lime.copy(alpha = .3f), RoundedCornerShape(26.dp))
+                    .verticalScroll(rememberScrollState())
+            ) {
+                if (wide) {
+                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                        BreakPoster(remaining, interval, Modifier.weight(.46f).height(270.dp))
+                        BreakDetails(s, m, interval, deciding, onFinish, Modifier.weight(.54f))
+                    }
+                } else {
+                    BreakPoster(remaining, interval, Modifier.fillMaxWidth().height(210.dp))
+                    BreakDetails(s, m, interval, deciding, onFinish, Modifier.fillMaxWidth())
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun BreakPoster(remaining: Long, interval: Boolean, modifier: Modifier) {
+    Box(modifier.background(Ink)) {
+        RefereeHeroArt(
+            Modifier.matchParentSize(),
+            if (interval) RefereeScene.Interval else RefereeScene.GameBreak,
+        )
+        Column(
+            Modifier.padding(22.dp).align(Alignment.CenterStart),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
             Eyebrow("TAKE A BREATH", Lime)
-            Text(if (interval) "中场间歇" else "局间休息", fontSize = 30.sp, fontWeight = FontWeight.Black)
+            Text(
+                if (interval) "中场间歇" else "局间休息",
+                fontSize = 30.sp,
+                lineHeight = 38.sp,
+                fontFamily = PlayerScript,
+                color = Paper,
+            )
             Text(
                 "${remaining/60}:${(remaining%60).toString().padStart(2,'0')}",
-                fontSize = 76.sp,
+                fontSize = 64.sp,
+                lineHeight = 72.sp,
+                fontFamily = FontFamily.Monospace,
                 fontWeight = FontWeight.Black,
                 color = Lime,
+                letterSpacing = (-3).sp,
             )
-            Text(if (!interval || deciding) "请提醒双方交换场地" else "请提醒选手补水，准备继续比赛", fontSize = 14.sp)
-            Text(
-                "接下来由 ${if(Scoring.server(s)==0)m.sideA else m.sideB} 发球",
-                fontSize = 12.sp,
-                color = Soft,
-            )
-            PrimaryButton("结束间歇，继续比赛", onFinish, Modifier.fillMaxWidth())
         }
+    }
+}
+
+@Composable
+private fun BreakDetails(
+    s: ScoreSession,
+    m: Match,
+    interval: Boolean,
+    deciding: Boolean,
+    onFinish: () -> Unit,
+    modifier: Modifier,
+) {
+    Column(modifier.padding(22.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        Text(
+            "${m.sideA}  /  ${m.sideB}",
+            fontSize = 15.sp,
+            fontWeight = FontWeight.Bold,
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis,
+        )
+        Text(
+            if (interval) "本局比分  ${Scoring.points(s.rallies,0)} : ${Scoring.points(s.rallies,1)}"
+            else "本场局分  ${Scoring.wins(s,0)} : ${Scoring.wins(s,1)}",
+            fontSize = 12.sp,
+            color = Soft,
+            lineHeight = 18.sp,
+        )
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Icon(
+                if (!interval || deciding) Icons.Outlined.SwapHoriz else Icons.Outlined.WaterDrop,
+                null,
+                Modifier.size(21.dp),
+                tint = Lime,
+            )
+            Text(
+                if (!interval || deciding) "请提醒双方交换场地" else "请提醒选手补水，准备继续比赛",
+                fontSize = 13.sp,
+                lineHeight = 19.sp,
+            )
+        }
+        Text(
+            "接下来由 ${if(Scoring.server(s)==0)m.sideA else m.sideB} 发球",
+            fontSize = 12.sp,
+            lineHeight = 18.sp,
+            color = Soft,
+        )
+        PrimaryButton("结束间歇，继续比赛", onFinish, Modifier.fillMaxWidth())
     }
 }
 
@@ -447,7 +673,9 @@ fun ResultScreen(state: UiState, vm: CourtsideViewModel) {
                     .clip(RoundedCornerShape(24.dp))
                     .background(Brush.verticalGradient(listOf(Color(0xFF25372B), PanelColor)))
             ) {
-                CourtArt(Modifier.matchParentSize())
+                if (state.login?.user?.role == "REFEREE")
+                    RefereeRecapArt(Modifier.matchParentSize())
+                else CourtArt(Modifier.matchParentSize())
                 Column(
                     Modifier.fillMaxWidth().padding(22.dp),
                     horizontalAlignment = Alignment.CenterHorizontally,

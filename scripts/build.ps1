@@ -11,7 +11,7 @@ if (-not (Test-Path -LiteralPath $gradlePath)) { $gradlePath = Join-Path $projec
 $gradleTasks = @(':server:bootJar')
 if (-not $ServerOnly) { $gradleTasks += @(':organizer:assembleDebug',':referee:assembleDebug') }
 if (-not $SkipTests) { $gradleTasks += @(':shared:test',':server:test') }
-$gradleOptions = @('--project-cache-dir',(Join-Path $workspaceTmp 'gradle-project-cache'),'--console=plain')
+$gradleOptions = @('--console=plain')
 if ($ServerOnly) { $gradleOptions += '-PserverOnly' }
 Push-Location $projectRoot
 try { & $gradlePath @gradleOptions @gradleTasks; if ($LASTEXITCODE -ne 0) { throw '构建失败，请检查上方日志' } } finally { Pop-Location }

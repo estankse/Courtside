@@ -1,4 +1,4 @@
-param([switch]$Background,[int]$Port=8080)
+﻿param([switch]$Background,[int]$Port=8080)
 $ErrorActionPreference = 'Stop'
 $projectRoot = Split-Path -Parent $PSScriptRoot
 $workspaceTmp = Join-Path (Split-Path -Parent $projectRoot) 'tmp'

@@ -19,8 +19,12 @@ import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.*
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.*
 import androidx.compose.ui.semantics.*
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
@@ -34,9 +38,12 @@ import cn.courtside.shared.Scoring
 fun CourtsideApp(organizer: Boolean, vm: CourtsideViewModel = viewModel()) {
     val state by vm.ui.collectAsStateWithLifecycle()
     val snack = remember { SnackbarHostState() }
-    LaunchedEffect(state.route) { if (state.route == "score") snack.currentSnackbarData?.dismiss() }
+    LaunchedEffect(state.route) {
+        if (state.route in listOf("score", "entrance")) snack.currentSnackbarData?.dismiss()
+    }
     var tab by rememberSaveable { mutableIntStateOf(0) }
     var showAccount by remember { mutableStateOf(false) }
+    var showVisualCredits by remember { mutableStateOf(false) }
     var dialog by rememberSaveable { mutableStateOf("") }
     var editedMatchJson by rememberSaveable { mutableStateOf("") }
     var reviewedJson by rememberSaveable { mutableStateOf("") }
@@ -53,7 +60,10 @@ fun CourtsideApp(organizer: Boolean, vm: CourtsideViewModel = viewModel()) {
             vm.dismissMessage()
         }
     }
-    BackHandler(enabled = state.login != null && state.route != "home") { vm.navigate("home") }
+    BackHandler(enabled = state.login != null && state.route != "home") {
+        if (state.route == "entrance") state.entrance?.let { vm.finishEntrance(it.id) }
+        else vm.navigate("home")
+    }
     CourtsideTheme {
         if (state.login == null) {
             LoginScreen(
@@ -67,7 +77,14 @@ fun CourtsideApp(organizer: Boolean, vm: CourtsideViewModel = viewModel()) {
         }
         Scaffold(
             containerColor = Ink,
-            snackbarHost = { SnackbarHost(snack) },
+            snackbarHost = {
+                SnackbarHost(
+                    snack,
+                    Modifier.padding(
+                        bottom = if (!organizer && state.route == "detail") 104.dp else 0.dp
+                    ),
+                )
+            },
             bottomBar = {
                 if (state.route == "home")
                     NavigationBar(containerColor = Ink, tonalElevation = 0.dp) {
@@ -100,13 +117,13 @@ fun CourtsideApp(organizer: Boolean, vm: CourtsideViewModel = viewModel()) {
             },
         ) { padding ->
             Column(Modifier.fillMaxSize().padding(padding)) {
-                if (state.busy)
+                if (state.busy && state.route != "entrance")
                     LinearProgressIndicator(
                         Modifier.fillMaxWidth().height(2.dp),
                         color = Lime,
                         trackColor = Edge,
                     )
-                if (state.route != "score") {
+                if (state.route !in listOf("score", "entrance")) {
                     Row(
                         Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 8.dp),
                         verticalAlignment = Alignment.CenterVertically,
@@ -156,6 +173,12 @@ fun CourtsideApp(organizer: Boolean, vm: CourtsideViewModel = viewModel()) {
                         }
                 }
                 when (state.route) {
+                    "entrance" ->
+                        state.selected?.let { match ->
+                            state.entrance?.let { entrance ->
+                                MatchEntranceScreen(match, entrance, vm::finishEntrance)
+                            }
+                        }
                     "score" -> ScoreScreen(state, vm)
                     "result" -> ResultScreen(state, vm)
                     "manage" -> ManagementScreen(state, vm, { dialog = "settings" })
@@ -198,6 +221,15 @@ fun CourtsideApp(organizer: Boolean, vm: CourtsideViewModel = viewModel()) {
                         Text(vm.repo.baseUrl, fontSize = 12.sp)
                         Text("最后同步 ${state.lastSync} · 待提交 ${state.pending} 场", fontSize = 12.sp)
                         Text("退出后，本机计分记录仍为原账号保留。", color = Soft, fontSize = 12.sp)
+                        if (!organizer)
+                            TextButton(
+                                onClick = {
+                                    showAccount = false
+                                    showVisualCredits = true
+                                }
+                            ) {
+                                Text("图片来源与授权")
+                            }
                     }
                 },
                 confirmButton = { TextButton(onClick = { showAccount = false }) { Text("继续使用") } },
@@ -212,6 +244,7 @@ fun CourtsideApp(organizer: Boolean, vm: CourtsideViewModel = viewModel()) {
                     }
                 },
             )
+        if (!organizer && showVisualCredits) RefereePhotoCreditsDialog { showVisualCredits = false }
         if (dialog == "tournament")
             TournamentForm(null, true, { dialog = "" }, state.busy, state.organizerError) {
                 vm.createTournament(it) { dialog = "" }
@@ -269,7 +302,8 @@ private fun LoginScreen(
         }
         item {
             Box(Modifier.fillMaxWidth().height(230.dp)) {
-                CourtArt(Modifier.fillMaxSize(), true)
+                if (organizer) CourtArt(Modifier.fillMaxSize(), true)
+                else RefereeHeroArt(Modifier.fillMaxSize(), RefereeScene.Login)
                 Column(
                     Modifier.align(Alignment.CenterStart),
                     verticalArrangement = Arrangement.spacedBy(10.dp),
@@ -280,6 +314,7 @@ private fun LoginScreen(
                         fontSize = 38.sp,
                         lineHeight = 48.sp,
                         fontWeight = FontWeight.Black,
+                        fontFamily = if (organizer) FontFamily.Default else PlayerScript,
                     )
                     Text(
                         if (organizer) "从第一场安排，到最后一分确认。" else "赛程、计分与回顾，在这里衔接。",
@@ -374,13 +409,26 @@ private fun SyncLine(state: UiState) {
 }
 
 @Composable
-private fun Stats(items: List<Pair<String, String>>) {
+private fun Stats(items: List<Pair<String, String>>, athletic: Boolean = false) {
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
         items.forEachIndexed { i, (n, label) ->
             Column(
                 Modifier.weight(1f)
                     .clip(RoundedCornerShape(18.dp))
                     .background(PanelColor)
+                    .then(
+                        if (athletic)
+                            Modifier.border(1.dp, Edge, RoundedCornerShape(18.dp)).drawWithContent {
+                                drawContent()
+                                drawLine(
+                                    listOf(Lime, Blue, Rose)[i % 3],
+                                    Offset(14.dp.toPx(), 1.dp.toPx()),
+                                    Offset(34.dp.toPx(), 1.dp.toPx()),
+                                    2.dp.toPx(),
+                                )
+                            }
+                        else Modifier
+                    )
                     .padding(horizontal = 14.dp, vertical = 15.dp)
             ) {
                 Text(
@@ -388,6 +436,7 @@ private fun Stats(items: List<Pair<String, String>>) {
                     fontSize = 28.sp,
                     fontWeight = FontWeight.Black,
                     color = if (i == 0) Lime else Paper,
+                    fontStyle = if (athletic) FontStyle.Italic else FontStyle.Normal,
                 )
                 Text(label, fontSize = 11.sp, color = Soft)
             }
@@ -430,11 +479,15 @@ private fun RefereeHome(state: UiState, tab: Int, vm: CourtsideViewModel, onSche
                     Modifier.fillMaxWidth()
                         .heightIn(min = 228.dp)
                         .clip(RoundedCornerShape(25.dp))
-                        .background(
-                            Brush.linearGradient(listOf(Color(0xFF1B2F36), Color(0xFF101C29)))
+                        .border(
+                            1.dp,
+                            Brush.linearGradient(
+                                listOf(Lime.copy(alpha = .32f), Edge, Blue.copy(alpha = .3f))
+                            ),
+                            RoundedCornerShape(25.dp),
                         )
                 ) {
-                    CourtArt(Modifier.matchParentSize())
+                    RefereeHeroArt(Modifier.matchParentSize())
                     Column(
                         Modifier.padding(22.dp).fillMaxWidth(),
                         verticalArrangement = Arrangement.spacedBy(12.dp),
@@ -470,7 +523,8 @@ private fun RefereeHome(state: UiState, tab: Int, vm: CourtsideViewModel, onSche
                         all.count { it.status in listOf("ACCEPTED", "IN_PROGRESS") }.toString() to
                             "待执裁",
                         all.count { it.status == "FINISHED" }.toString() to "已完成",
-                    )
+                    ),
+                    athletic = true,
                 )
             }
             if (state.pending > 0)
@@ -496,14 +550,11 @@ private fun RefereeHome(state: UiState, tab: Int, vm: CourtsideViewModel, onSche
                     .take(6),
                 key = { it.id },
             ) {
-                MatchCard(it, { vm.openMatch(it) })
+                MatchCard(it, { vm.openMatch(it) }, athletic = true)
             }
             if (all.isEmpty()) item { EmptyState("暂时没有执裁任务", "赛事组发布安排后，任务会自动出现在这里。") }
         } else if (tab == 1) {
-            item {
-                Text("我的赛程", fontSize = 28.sp, fontWeight = FontWeight.Black)
-                Text("核对场地和时间，接受后准时到场。", fontSize = 12.sp, color = Soft)
-            }
+            item { RefereeScheduleHeading() }
             item { FilterRow(listOf("全部", "待接受", "未开始", "进行中"), filter) { filter = it } }
             val shown =
                 all.filter {
@@ -518,21 +569,20 @@ private fun RefereeHome(state: UiState, tab: Int, vm: CourtsideViewModel, onSche
                 .groupBy { dateLabel(it.startsAt) }
                 .forEach { (date, matches) ->
                     item { SectionTitle(date) }
-                    items(matches, key = { it.id }) { MatchCard(it, { vm.openMatch(it) }) }
+                    items(matches, key = { it.id }) {
+                        MatchCard(it, { vm.openMatch(it) }, athletic = true)
+                    }
                 }
             if (shown.isEmpty()) item { EmptyState("这个分类暂无比赛", "可以切换分类，或刷新最新赛程。") }
         } else {
-            item {
-                Text("执裁记录", fontSize = 28.sp, fontWeight = FontWeight.Black)
-                Text("从第一球到赛后确认，都有迹可循。", fontSize = 12.sp, color = Soft)
-            }
+            item { RefereeRecordsHeading() }
             items(
                 all.filter {
                     it.status in listOf("FINISHED", "PENDING_REVIEW") || it.correctionRound > 0
                 },
                 key = { it.id },
             ) {
-                MatchCard(it, { vm.openMatch(it) })
+                MatchCard(it, { vm.openMatch(it) }, athletic = true)
             }
             if (
                 all.none {
@@ -821,6 +871,10 @@ private fun MatchDetail(
     onEdit: (Match) -> Unit,
     onReview: (Submission) -> Unit,
 ) {
+    if (!organizer) {
+        RefereeMatchDetail(state, vm)
+        return
+    }
     val m = state.selected ?: return
     var toss by remember { mutableStateOf(false) }
     var cancel by rememberSaveable(m.id) { mutableStateOf(false) }

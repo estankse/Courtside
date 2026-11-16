@@ -1,6 +1,7 @@
 package cn.courtside.client
 
 import android.app.Application
+import android.os.SystemClock
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import cn.courtside.shared.Models.*
@@ -13,6 +14,11 @@ import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 
+data class MatchEntranceState(val id: String, val resumed: Boolean, val startedAtMillis: Long) {
+    val durationMillis: Long
+        get() = if (resumed) 1400L else 3400L
+}
+
 data class UiState(
     val login: Login? = null,
     val busy: Boolean = false,
@@ -24,6 +30,7 @@ data class UiState(
     val selected: Match? = null,
     val score: ScoreSession? = null,
     val route: String = "home",
+    val entrance: MatchEntranceState? = null,
     val message: String? = null,
     val issue: String? = null,
     val lastSync: String = "尚未同步",
@@ -170,7 +177,15 @@ class CourtsideViewModel(application: Application) : AndroidViewModel(applicatio
     }
 
     fun navigate(route: String) {
-        _ui.update { it.copy(route = route) }
+        _ui.update { it.copy(route = route, entrance = null) }
+    }
+
+    fun finishEntrance(id: String) {
+        _ui.update {
+            if (it.route == "entrance" && it.entrance?.id == id)
+                it.copy(route = "score", entrance = null)
+            else it
+        }
     }
 
     fun refreshNow() = viewModelScope.launch { refresh(true) }
@@ -374,7 +389,9 @@ class CourtsideViewModel(application: Application) : AndroidViewModel(applicatio
     fun openMatch(match: Match) =
         viewModelScope.launch {
             val score = repo.session(match.id)
-            _ui.update { it.copy(selected = match, score = score, route = "detail") }
+            _ui.update {
+                it.copy(selected = match, score = score, route = "detail", entrance = null)
+            }
         }
 
     fun start(match: Match, initialServer: Int) = job {
@@ -398,7 +415,20 @@ class CourtsideViewModel(application: Application) : AndroidViewModel(applicatio
         val feed = repo.gson.fromJson(repo.gson.toJson(_ui.value.feed), Feed::class.java)
         feed.matches = feed.matches.map { if (it.id == m.id) m else it }
         repo.cache("feed", feed)
-        _ui.update { it.copy(selected = m, score = s, route = "score", feed = feed) }
+        _ui.update {
+            it.copy(
+                selected = m,
+                score = s,
+                route = "entrance",
+                feed = feed,
+                entrance =
+                    MatchEntranceState(
+                        UUID.randomUUID().toString(),
+                        false,
+                        SystemClock.elapsedRealtime(),
+                    ),
+            )
+        }
         refresh(false)
     }
 
@@ -428,8 +458,20 @@ class CourtsideViewModel(application: Application) : AndroidViewModel(applicatio
                 }
             repo.saveSession(s)
         }
+        val complete = Scoring.winner(s, m.rules) >= 0
         _ui.update {
-            it.copy(score = s, route = if (Scoring.winner(s, m.rules) >= 0) "result" else "score")
+            it.copy(
+                score = s,
+                route = if (complete) "result" else "entrance",
+                entrance =
+                    if (complete) null
+                    else
+                        MatchEntranceState(
+                            UUID.randomUUID().toString(),
+                            true,
+                            SystemClock.elapsedRealtime(),
+                        ),
+            )
         }
     }
 

@@ -14,7 +14,7 @@ $gradlePath=Join-Path $workspaceTmp 'toolchain\gradle-8.11.1\bin\gradle.bat'
 if(-not (Test-Path -LiteralPath $gradlePath)){$gradlePath=Join-Path $projectRoot 'gradlew.bat'}
 Push-Location $projectRoot
 try{
-    & $gradlePath --project-cache-dir (Join-Path $workspaceTmp 'gradle-project-cache') :client:assembleDebugAndroidTest --console=plain
+    & $gradlePath :client:assembleDebugAndroidTest --console=plain
     if($LASTEXITCODE -ne 0){throw '界面测试包构建失败'}
     $serviceUrl='http://10.0.2.2:8080/api'
     if($UseAdbReverse){& $adbPath -s $Serial reverse tcp:8080 tcp:8080;$serviceUrl='http://127.0.0.1:8080/api'}

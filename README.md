@@ -38,6 +38,8 @@
 
 Gradle 缓存、模块编译目录、测试报告和调试日志均可放在同级 `tmp`；`scripts/build.ps1` 已按此配置。两个 APK 与服务端包是独立产物，不需要把 tmp 交给最终使用者。
 
+`gradle.properties` 统一将项目增量缓存放到 `../tmp/gradle-project-cache`，Android Studio 与构建脚本使用同一份任务历史。两种方式会共用 `../tmp/builds` 中的编译输出，请保留这一缓存配置，以免切换构建方式后产生资源重复合并错误。
+
 ## 已实现的业务
 
 赛事组可以创建及编辑赛事和计分规则，维护参赛者、场地及赛事裁判，手工编排对阵与时间，保存草稿、发布、调整或取消未开始的比赛。云端检查场地、裁判和参赛者的时间重叠。已接受的赛程发生调整后重新进入待接受状态；开始后锁定安排。
@@ -85,7 +87,7 @@ PORT=8080
 ```powershell
 ./scripts/build.ps1
 # 已启动服务并连接模拟器后，执行真正的跨端界面流程
-./gradlew.bat --project-cache-dir ../tmp/gradle-project-cache :client:connectedDebugAndroidTest
+./gradlew.bat :client:connectedDebugAndroidTest
 # 模拟器或USB设备的宿主网络异常时，可用ADB转发，连接的仍是真实服务
 ./scripts/test-ui.ps1 -Serial emulator-5556 -UseAdbReverse
 ```

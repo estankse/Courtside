@@ -231,62 +231,90 @@ fun CourtArt(modifier: Modifier = Modifier, bright: Boolean = false) {
 }
 
 @Composable
-fun MatchCard(match: Match, onClick: () -> Unit, modifier: Modifier = Modifier) {
-    Column(
+fun MatchCard(
+    match: Match,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    athletic: Boolean = false,
+) {
+    Box(
         modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(22.dp))
             .background(PanelColor)
             .border(1.dp, Edge, RoundedCornerShape(22.dp))
-            .clickable(onClick = onClick)
-            .padding(17.dp),
-        verticalArrangement = Arrangement.spacedBy(14.dp),
-    ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Text(match.round, color = Soft, fontSize = 11.sp, modifier = Modifier.weight(1f))
-            StatusPill(match.status)
-        }
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Column(Modifier.weight(1f)) {
-                Text(
-                    match.sideA,
-                    fontWeight = FontWeight.Bold,
-                    fontSize = 20.sp,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-                Text(match.unitA, color = Soft, fontSize = 10.sp, maxLines = 1)
-            }
-            val p = match.progress
-            Text(
-                if (p != null) "${Scoring.points(p.rallies,0)} : ${Scoring.points(p.rallies,1)}"
-                else "VS",
-                color = if (p == null) Soft else Lime,
-                fontSize = if (p == null) 13.sp else 22.sp,
-                fontWeight = FontWeight.Black,
-                modifier = Modifier.padding(horizontal = 12.dp),
+            .then(
+                if (athletic)
+                    Modifier.drawWithContent {
+                        drawContent()
+                        drawLine(
+                            Blue.copy(alpha = .75f),
+                            Offset(22.dp.toPx(), 1.dp.toPx()),
+                            Offset(size.width * .3f, 1.dp.toPx()),
+                            2.dp.toPx(),
+                        )
+                        drawLine(
+                            Rose.copy(alpha = .75f),
+                            Offset(size.width * .7f, 1.dp.toPx()),
+                            Offset(size.width - 22.dp.toPx(), 1.dp.toPx()),
+                            2.dp.toPx(),
+                        )
+                    }
+                else Modifier
             )
-            Column(Modifier.weight(1f), horizontalAlignment = Alignment.End) {
-                Text(
-                    match.sideB,
-                    fontWeight = FontWeight.Bold,
-                    fontSize = 20.sp,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-                Text(match.unitB, color = Soft, fontSize = 10.sp, maxLines = 1)
+            .clickable(onClick = onClick)
+    ) {
+        if (athletic) RefereeMatchCardArt(match.id, Modifier.matchParentSize())
+        Column(
+            Modifier.fillMaxWidth().padding(17.dp),
+            verticalArrangement = Arrangement.spacedBy(14.dp),
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(match.round, color = Soft, fontSize = 11.sp, modifier = Modifier.weight(1f))
+                StatusPill(match.status)
             }
-        }
-        HorizontalDivider(color = Edge)
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Icon(Icons.Outlined.Schedule, null, Modifier.size(14.dp), tint = Soft)
-            Spacer(Modifier.width(5.dp))
-            Text(timeLabel(match.startsAt), color = Soft, fontSize = 12.sp)
-            Spacer(Modifier.width(16.dp))
-            Icon(Icons.Outlined.Place, null, Modifier.size(14.dp), tint = Soft)
-            Spacer(Modifier.width(4.dp))
-            Text(match.court, color = Soft, fontSize = 12.sp, modifier = Modifier.weight(1f))
-            Icon(Icons.Outlined.ArrowForward, null, Modifier.size(17.dp), tint = Lime)
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text(
+                        match.sideA,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 20.sp,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    Text(match.unitA, color = Soft, fontSize = 10.sp, maxLines = 1)
+                }
+                val p = match.progress
+                Text(
+                    if (p != null) "${Scoring.points(p.rallies,0)} : ${Scoring.points(p.rallies,1)}"
+                    else "VS",
+                    color = if (p == null) Soft else Lime,
+                    fontSize = if (p == null) 13.sp else 22.sp,
+                    fontWeight = FontWeight.Black,
+                    modifier = Modifier.padding(horizontal = 12.dp),
+                )
+                Column(Modifier.weight(1f), horizontalAlignment = Alignment.End) {
+                    Text(
+                        match.sideB,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 20.sp,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    Text(match.unitB, color = Soft, fontSize = 10.sp, maxLines = 1)
+                }
+            }
+            HorizontalDivider(color = Edge)
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Outlined.Schedule, null, Modifier.size(14.dp), tint = Soft)
+                Spacer(Modifier.width(5.dp))
+                Text(timeLabel(match.startsAt), color = Soft, fontSize = 12.sp)
+                Spacer(Modifier.width(16.dp))
+                Icon(Icons.Outlined.Place, null, Modifier.size(14.dp), tint = Soft)
+                Spacer(Modifier.width(4.dp))
+                Text(match.court, color = Soft, fontSize = 12.sp, modifier = Modifier.weight(1f))
+                Icon(Icons.Outlined.ArrowForward, null, Modifier.size(17.dp), tint = Lime)
+            }
         }
     }
 }

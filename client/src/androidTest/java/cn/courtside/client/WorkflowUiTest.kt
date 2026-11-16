@@ -6,7 +6,6 @@ import androidx.activity.ComponentActivity
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
-import androidx.compose.ui.semantics.SemanticsActions
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
@@ -79,7 +78,9 @@ class WorkflowUiTest {
             decor.postOnAnimation { decor.postOnAnimation { frames.countDown() } }
         }
         Assert.assertTrue("Screen did not draw in time", frames.await(3, TimeUnit.SECONDS))
-        val image = InstrumentationRegistry.getInstrumentation().uiAutomation.takeScreenshot()
+        // Capture the composed screen and its dialogs together through the real window compositor.
+        val image =
+            checkNotNull(InstrumentationRegistry.getInstrumentation().uiAutomation.takeScreenshot())
         val file =
             File(
                 InstrumentationRegistry.getInstrumentation()
@@ -181,13 +182,18 @@ class WorkflowUiTest {
         compose.onNodeWithText("进入裁判工作台").performScrollTo().performClick()
         compose.waitUntil(20000) { vm.ui.value.feed.matches.any { it.id == m.id } }
         screenshot("02-referee-home")
+        compose.onNodeWithContentDescription("账户与连接").performClick()
+        compose.onNodeWithText("图片来源与授权").performClick()
+        compose.onNodeWithText("工作台 · 林丹得分庆祝").assertIsDisplayed()
+        compose.onAllNodesWithText("原图与作者")[0].assertHasClickAction()
+        screenshot("02a-photo-credits")
+        compose.onNodeWithText("完成").performClick()
         compose.onNodeWithText("我的赛程").performClick()
         compose.onNode(hasScrollToIndexAction()).performScrollToNode(hasText(roundName))
         compose.onNodeWithText(roundName).performClick()
-        compose.onNodeWithText("接受执裁任务").performScrollTo().performClick()
+        compose.onNodeWithText("接受执裁任务").assertIsDisplayed().performClick()
         compose.waitUntil(15000) { vm.ui.value.selected?.status == "ACCEPTED" && !vm.ui.value.busy }
-        compose.onNodeWithText("赛前准备与抽签").performScrollTo().assertIsEnabled()
-            .performSemanticsAction(SemanticsActions.OnClick) { it() }
+        compose.onNodeWithText("赛前准备与抽签").assertIsDisplayed().assertIsEnabled().performClick()
         try {
             compose.waitUntil(5000) {
                 compose.onAllNodesWithText("确认并开始比赛").fetchSemanticsNodes().size == 1
@@ -200,8 +206,14 @@ class WorkflowUiTest {
             )
             throw e
         }
+        screenshot("02b-preparation")
         compose.onNodeWithText("确认并开始比赛").performClick()
         compose.waitUntil(15000) { vm.ui.value.route == "score" }
+        Assert.assertNull(vm.ui.value.entrance)
+        Assert.assertTrue(vm.ui.value.score!!.rallies.isEmpty())
+        runBlocking {
+            Assert.assertEquals(vm.ui.value.score!!.sessionId, vm.repo.session(m.id)!!.sessionId)
+        }
         screenshot("03-score-dark")
         compose.onNodeWithContentDescription("切换明暗计分模式").performClick()
         screenshot("04-score-light")
@@ -210,6 +222,7 @@ class WorkflowUiTest {
         compose.waitUntil(5000) { vm.ui.value.score?.rallies?.size == 1 }
         compose.onNodeWithContentDescription("验收蓝方 加一分，当前 1 分").performClick()
         compose.waitUntil(5000) { (vm.ui.value.score?.breakUntil ?: 0) > 0 }
+        screenshot("04a-midgame-break")
         compose.onNodeWithText("结束间歇，继续比赛").assertIsDisplayed().performClick()
         compose.waitUntil(5000) { vm.ui.value.score?.breakUntil == 0L }
         runBlocking { Assert.assertEquals(2, vm.repo.session(m.id)!!.rallies.size) }

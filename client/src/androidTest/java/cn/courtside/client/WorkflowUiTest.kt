@@ -4,9 +4,9 @@ import android.app.Application
 import android.graphics.Bitmap
 import androidx.activity.ComponentActivity
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
+import androidx.compose.ui.semantics.SemanticsActions
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
@@ -17,6 +17,8 @@ import java.net.HttpURLConnection
 import java.net.URL
 import java.time.Instant
 import java.util.UUID
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.runBlocking
 import org.junit.*
 import org.junit.runner.RunWith
@@ -69,7 +71,15 @@ class WorkflowUiTest {
 
     private fun screenshot(name: String) {
         compose.waitForIdle()
-        val image = compose.onRoot().captureToImage().asAndroidBitmap()
+        android.os.SystemClock.sleep(400)
+        compose.waitForIdle()
+        val frames = CountDownLatch(1)
+        compose.runOnIdle {
+            val decor = compose.activity.window.decorView
+            decor.postOnAnimation { decor.postOnAnimation { frames.countDown() } }
+        }
+        Assert.assertTrue("Screen did not draw in time", frames.await(3, TimeUnit.SECONDS))
+        val image = InstrumentationRegistry.getInstrumentation().uiAutomation.takeScreenshot()
         val file =
             File(
                 InstrumentationRegistry.getInstrumentation()
@@ -176,9 +186,19 @@ class WorkflowUiTest {
         compose.onNodeWithText(roundName).performClick()
         compose.onNodeWithText("接受执裁任务").performScrollTo().performClick()
         compose.waitUntil(15000) { vm.ui.value.selected?.status == "ACCEPTED" && !vm.ui.value.busy }
-        compose.onNodeWithText("赛前准备与抽签").performScrollTo().assertIsEnabled().performClick()
-        compose.waitUntil(5000) {
-            compose.onAllNodesWithText("确认并开始比赛").fetchSemanticsNodes().size == 1
+        compose.onNodeWithText("赛前准备与抽签").performScrollTo().assertIsEnabled()
+            .performSemanticsAction(SemanticsActions.OnClick) { it() }
+        try {
+            compose.waitUntil(5000) {
+                compose.onAllNodesWithText("确认并开始比赛").fetchSemanticsNodes().size == 1
+            }
+        } catch (e: Throwable) {
+            screenshot("03-toss-failure")
+            File(application.getExternalFilesDir(null), "toss-failure.txt").writeText(
+                compose.onRoot().printToString() +
+                    "\nroute=${vm.ui.value.route}; status=${vm.ui.value.selected?.status}; busy=${vm.ui.value.busy}"
+            )
+            throw e
         }
         compose.onNodeWithText("确认并开始比赛").performClick()
         compose.waitUntil(15000) { vm.ui.value.route == "score" }
@@ -203,7 +223,8 @@ class WorkflowUiTest {
             vm.ui.value.score?.aConfirmed == true && vm.ui.value.score?.bConfirmed == true
         }
         compose.waitForIdle()
-        compose.onNodeWithText("确认结果并提交云端").performScrollTo().assertIsEnabled().performClick()
+        compose.onNode(hasScrollToIndexAction()).performScrollToNode(hasText("确认结果并提交云端"))
+        compose.onNodeWithText("确认结果并提交云端").assertIsEnabled().performClick()
         try {
             compose.waitUntil(20000) { vm.ui.value.selected?.status == "PENDING_REVIEW" }
         } catch (e: Throwable) {
@@ -220,6 +241,7 @@ class WorkflowUiTest {
             vm.logout()
             organizer.value = true
         }
+        compose.onNodeWithText("密码").performTextReplacement("Courtside2026!")
         compose.onNodeWithText("进入赛事组工作台").performScrollTo().performClick()
         compose.waitUntil(20000) { vm.ui.value.workspace != null }
         compose.onNodeWithText("赛事总览").performClick()

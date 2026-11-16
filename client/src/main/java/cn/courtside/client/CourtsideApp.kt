@@ -37,9 +37,16 @@ fun CourtsideApp(organizer: Boolean, vm: CourtsideViewModel = viewModel()) {
     LaunchedEffect(state.route) { if (state.route == "score") snack.currentSnackbarData?.dismiss() }
     var tab by rememberSaveable { mutableIntStateOf(0) }
     var showAccount by remember { mutableStateOf(false) }
-    var dialog by remember { mutableStateOf("") }
-    var editedMatch by remember { mutableStateOf<Match?>(null) }
-    var reviewed by remember { mutableStateOf<Submission?>(null) }
+    var dialog by rememberSaveable { mutableStateOf("") }
+    var editedMatchJson by rememberSaveable { mutableStateOf("") }
+    var reviewedJson by rememberSaveable { mutableStateOf("") }
+    val editedMatch = remember(editedMatchJson) {
+        editedMatchJson.takeIf { it.isNotEmpty() }?.let { vm.repo.gson.fromJson(it, Match::class.java) }
+    }
+    val reviewed = remember(reviewedJson) {
+        reviewedJson.takeIf { it.isNotEmpty() }?.let { vm.repo.gson.fromJson(it, Submission::class.java) }
+    }
+    LaunchedEffect(dialog, reviewedJson) { if (organizer) vm.clearOrganizerError() }
     LaunchedEffect(state.message) {
         state.message?.let {
             snack.showSnackbar(it)
@@ -145,7 +152,7 @@ fun CourtsideApp(organizer: Boolean, vm: CourtsideViewModel = viewModel()) {
                         ) {
                             Icon(Icons.Outlined.CloudOff, null, Modifier.size(15.dp), tint = Rose)
                             Spacer(Modifier.width(8.dp))
-                            Text("当前离线 · 已开始比赛可继续计分", color = Rose, fontSize = 12.sp)
+                            Text(if (organizer) "当前离线 · 正在查看缓存，编排、发布和核验需联网" else "当前离线 · 已开始比赛可继续计分", color = Rose, fontSize = 12.sp, modifier = Modifier.weight(1f))
                         }
                 }
                 when (state.route) {
@@ -158,10 +165,10 @@ fun CourtsideApp(organizer: Boolean, vm: CourtsideViewModel = viewModel()) {
                             organizer,
                             vm,
                             {
-                                editedMatch = it
+                                editedMatchJson = vm.repo.gson.toJson(it)
                                 dialog = "match"
                             },
-                            { reviewed = it },
+                            { reviewedJson = vm.repo.gson.toJson(it) },
                         )
                     else ->
                         if (organizer)
@@ -171,10 +178,10 @@ fun CourtsideApp(organizer: Boolean, vm: CourtsideViewModel = viewModel()) {
                                 vm,
                                 { dialog = "tournament" },
                                 {
-                                    editedMatch = null
+                                    editedMatchJson = ""
                                     dialog = "match"
                                 },
-                                { reviewed = it },
+                                { reviewedJson = vm.repo.gson.toJson(it) },
                             )
                         else RefereeHome(state, tab, vm) { tab = 1 }
                 }
@@ -206,38 +213,29 @@ fun CourtsideApp(organizer: Boolean, vm: CourtsideViewModel = viewModel()) {
                 },
             )
         if (dialog == "tournament")
-            TournamentForm(null, true, { dialog = "" }) {
-                vm.createTournament(it)
-                dialog = ""
+            TournamentForm(null, true, { dialog = "" }, state.busy, state.organizerError) {
+                vm.createTournament(it) { dialog = "" }
             }
         if (dialog == "settings")
             state.workspace?.let { w ->
                 TournamentForm(
-                    w.tournament,
-                    w.matches.all { it.status == "DRAFT" },
-                    { dialog = "" },
-                ) {
-                    vm.editTournament(it)
-                    dialog = ""
-                }
+                    w.tournament, w.matches.all { it.status == "DRAFT" },
+                    { dialog = "" }, state.busy, state.organizerError,
+                ) { vm.editTournament(it) { dialog = "" } }
             }
         if (dialog == "match")
             state.workspace?.let { w ->
-                MatchForm(w, editedMatch, { dialog = "" }) { body ->
-                    vm.saveMatch(body, editedMatch?.id)
-                    dialog = ""
+                MatchForm(w, editedMatch, { dialog = "" }, state.busy, state.organizerError) { body ->
+                    vm.saveMatch(body, editedMatch?.id) { dialog = "" }
                 }
             }
-        reviewed?.let { s ->
+        reviewed?.let { submission ->
             ReviewDialog(
-                s,
-                state.workspace?.matches?.find { it.id == s.matchId },
-                { reviewed = null },
-                { yes, reason ->
-                    vm.review(s, yes, reason)
-                    reviewed = null
-                },
-            )
+                submission, state.workspace?.matches?.find { it.id == submission.matchId },
+                { reviewedJson = "" }, state.busy, state.organizerError,
+            ) { yes, reason ->
+                vm.review(submission, yes, reason) { reviewedJson = "" }
+            }
         }
     }
 }
@@ -252,7 +250,7 @@ private fun LoginScreen(
 ) {
     var username by
         rememberSaveable(organizer) { mutableStateOf(if (organizer) "organizer" else "referee") }
-    var password by rememberSaveable { mutableStateOf("Courtside2026!") }
+    var password by rememberSaveable(organizer) { mutableStateOf(if (organizer) "" else "Courtside2026!") }
     var address by rememberSaveable { mutableStateOf(url) }
     var connection by remember { mutableStateOf(false) }
     LazyColumn(
@@ -616,7 +614,19 @@ private fun OrganizerHome(
                 ActionIcon(Icons.Outlined.AddCircleOutline, "创建赛事", newTournament)
             }
         }
-        if (w == null) {
+        if (state.organizerLoadError != null) item {
+            Panel(Modifier.fillMaxWidth()) {
+                Text("赛事资料加载失败", color = Rose, fontWeight = FontWeight.Bold)
+                Text(state.organizerLoadError, fontSize = 14.sp)
+                if (w != null) Text("当前显示上次缓存的数据。", color = Soft)
+                OutlinedButton(onClick = { vm.refreshNow() }, enabled = !state.organizerLoading) { Text("重新加载") }
+            }
+        }
+        if (w == null && (state.organizerLoading || !state.organizerLoaded)) {
+            item { EmptyState("正在加载赛事资料", "请稍候，正在查询你的赛事。") }
+        } else if (w == null && state.organizerLoadError != null) {
+            // Retry is shown above. A failed request is not an empty tournament list.
+        } else if (w == null) {
             item { EmptyState("创建你的第一项赛事", "添加参赛者、场地与裁判，即可编排比赛。") }
             item {
                 PrimaryButton(
@@ -653,7 +663,7 @@ private fun OrganizerHome(
                             fontSize = 12.sp,
                             color = Soft,
                         )
-                        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        FlowRow(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                             PrimaryButton(
                                 "编排比赛",
                                 newMatch,
@@ -686,7 +696,7 @@ private fun OrganizerHome(
                     .take(4),
                 key = { it.id },
             ) {
-                MatchCard(it, { vm.openMatch(it) })
+                OrganizerMatchCard(it, { vm.openMatch(it) })
             }
             if (w.matches.isEmpty()) item { EmptyState("赛程还未编排", "先在管理资料中添加参赛者、场地与裁判。") }
             if (w.audit.isNotEmpty()) {
@@ -744,7 +754,7 @@ private fun OrganizerHome(
                 .groupBy { dateLabel(it.startsAt) }
                 .forEach { (date, ms) ->
                     item { SectionTitle(date) }
-                    items(ms, key = { it.id }) { MatchCard(it, { vm.openMatch(it) }) }
+                    items(ms, key = { it.id }) { OrganizerMatchCard(it, { vm.openMatch(it) }) }
                 }
             if (shown.isEmpty()) item { EmptyState("暂无符合条件的比赛", "切换分类，或新建一场比赛。") }
         } else {
@@ -813,8 +823,9 @@ private fun MatchDetail(
 ) {
     val m = state.selected ?: return
     var toss by remember { mutableStateOf(false) }
-    var cancel by remember { mutableStateOf(false) }
-    var delete by remember { mutableStateOf(false) }
+    var cancel by rememberSaveable(m.id) { mutableStateOf(false) }
+    var cancelReason by rememberSaveable(m.id) { mutableStateOf("") }
+    var delete by rememberSaveable(m.id) { mutableStateOf(false) }
     val s =
         state.workspace?.submissions?.find { it.id == m.currentSubmissionId }
             ?: state.feed.submissions.find { it.id == m.currentSubmissionId }
@@ -837,7 +848,7 @@ private fun MatchDetail(
         item {
             Panel {
                 Eyebrow(m.round, Lime)
-                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                if (organizer) OrganizerPlayers(m) else Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                     Column(Modifier.weight(1f)) {
                         Text(m.sideA, color = Blue, fontSize = 27.sp, fontWeight = FontWeight.Black)
                         Text(m.unitA, color = Soft, fontSize = 11.sp)
@@ -851,7 +862,7 @@ private fun MatchDetail(
             }
         }
         item {
-            Panel {
+            if (organizer) OrganizerMatchMetadata(m) else Panel {
                 MetaRow(Icons.Outlined.CalendarMonth, "比赛日期", dateLabel(m.startsAt))
                 MetaRow(
                     Icons.Outlined.Schedule,
@@ -881,7 +892,8 @@ private fun MatchDetail(
                     Text("请核对原比分，修改后重新让双方确认并提交。", color = Soft, fontSize = 11.sp)
                 }
             }
-        if (m.progress != null)
+        if (organizer && m.progress != null) item { OrganizerScoreDetails(m) }
+        else if (m.progress != null)
             item {
                 Panel {
                     Text(
@@ -918,7 +930,8 @@ private fun MatchDetail(
                         )
                     if (m.status == "DRAFT")
                         TextButton(
-                            onClick = { delete = true },
+                            onClick = { vm.clearOrganizerError(); delete = true },
+                            enabled = !state.busy,
                             modifier = Modifier.fillMaxWidth(),
                         ) {
                             Text("删除草稿", color = Rose)
@@ -926,12 +939,14 @@ private fun MatchDetail(
                     if (m.status in listOf("DRAFT", "PUBLISHED", "ACCEPTED")) {
                         OutlinedButton(
                             onClick = { onEdit(m) },
+                            enabled = !state.busy,
                             modifier = Modifier.fillMaxWidth(),
                         ) {
                             Text("调整比赛安排")
                         }
                         TextButton(
-                            onClick = { cancel = true },
+                            onClick = { vm.clearOrganizerError(); cancel = true },
+                            enabled = !state.busy,
                             modifier = Modifier.fillMaxWidth(),
                         ) {
                             Text("取消本场比赛", color = Rose)
@@ -990,25 +1005,25 @@ private fun MatchDetail(
             vm.start(m, side)
         }
     if (cancel)
-        ReasonDialog("取消本场比赛", "请填写取消原因，裁判端会同步更新。", { cancel = false }) {
-            vm.matchAction(m, "cancel", it)
-            cancel = false
+        OrganizerReasonDialog("取消本场比赛", "请填写取消原因，裁判端会同步更新。",
+            state.busy, state.organizerError, { cancel = false }, cancelReason, { cancelReason = it }) {
+            vm.matchAction(m, "cancel", it) { cancel = false }
         }
     if (delete)
         AlertDialog(
-            onDismissRequest = { delete = false },
+            onDismissRequest = { if (!state.busy) delete = false },
             title = { Text("删除比赛草稿") },
-            text = { Text("这场尚未发布的对阵将被移除。") },
+            text = { Column { Text("这场尚未发布的对阵将被移除。")
+                state.organizerError?.let { Text(it, color = Rose) } } },
             confirmButton = {
                 TextButton(
                     onClick = {
-                        delete = false
-                        vm.deleteDraft(m)
-                    }
+                        vm.deleteDraft(m) { delete = false }
+                    }, enabled = !state.busy
                 ) {
-                    Text("删除", color = Rose)
+                    Text(if (state.busy) "正在删除…" else "删除", color = Rose)
                 }
             },
-            dismissButton = { TextButton(onClick = { delete = false }) { Text("保留") } },
+            dismissButton = { TextButton(onClick = { delete = false }, enabled = !state.busy) { Text("保留") } },
         )
 }

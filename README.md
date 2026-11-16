@@ -20,7 +20,7 @@
 | 裁判一 | referee | Courtside2026! |
 | 裁判二 | referee2 | Courtside2026! |
 
-登录页预填的是开发演示账号。可以修改账号和服务地址。`SEED_DEMO=false` 可关闭首次初始化；演示账号密码由 `DemoData` 统一管理，正式使用应替换账号初始化方案。
+赛事组登录页默认账号为 organizer，密码留空，需要手动输入；裁判端保留开发演示账号与密码预填。可以修改账号和服务地址。`SEED_DEMO=false` 可关闭首次初始化；演示账号密码由 `DemoData` 统一管理，正式使用应替换账号初始化方案。
 
 在全新数据库关闭演示初始化时，可用 BOOTSTRAP_USERNAME 与 BOOTSTRAP_PASSWORD 环境变量创建唯一的初始赛事管理员。赛事组可在“管理资料 → 裁判”中创建新的裁判账号并加入赛事。
 

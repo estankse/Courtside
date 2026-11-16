@@ -14,6 +14,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.*
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
@@ -109,7 +110,7 @@ fun SelectField(
 }
 
 @Composable
-fun DateField(value: String, label: String, withTime: Boolean, onChange: (String) -> Unit) {
+fun DateField(value: String, label: String, withTime: Boolean, enabled: Boolean = true, onChange: (String) -> Unit) {
     val context = LocalContext.current
     fun choose() {
         val date = runCatching { LocalDate.parse(value.take(10)) }.getOrDefault(LocalDate.now())
@@ -146,9 +147,10 @@ fun DateField(value: String, label: String, withTime: Boolean, onChange: (String
             value,
             {},
             readOnly = true,
+            enabled = enabled,
             label = { Text(label, fontSize = 12.sp) },
             trailingIcon = {
-                IconButton(onClick = { choose() }) { Icon(Icons.Outlined.CalendarMonth, "选择日期与时间") }
+                IconButton(onClick = { choose() }, enabled = enabled) { Icon(Icons.Outlined.CalendarMonth, "选择日期与时间") }
             },
             modifier = Modifier.fillMaxWidth(),
             shape = RoundedCornerShape(12.dp),
@@ -161,58 +163,64 @@ fun TournamentForm(
     original: Tournament?,
     rulesEditable: Boolean,
     onDismiss: () -> Unit,
+    busy: Boolean = false,
+    serverError: String? = null,
     onSave: (Map<String, Any>) -> Unit,
 ) {
-    var name by remember { mutableStateOf(original?.name.orEmpty()) }
-    var venue by remember { mutableStateOf(original?.location.orEmpty()) }
-    var date by remember { mutableStateOf(original?.date ?: LocalDate.now().toString()) }
-    var description by remember { mutableStateOf(original?.description.orEmpty()) }
-    var target by remember { mutableStateOf((original?.rules?.target ?: 21).toString()) }
-    var cap by remember { mutableStateOf((original?.rules?.cap ?: 30).toString()) }
-    var wins by remember { mutableStateOf((original?.rules?.gamesToWin ?: 2).toString()) }
-    var lead by remember { mutableStateOf((original?.rules?.lead ?: 2).toString()) }
-    var error by remember { mutableStateOf("") }
-    FormDialog(
-        if (original == null) "创建赛事" else "赛事设置",
-        onDismiss,
+    val readOnly = original?.status == "ARCHIVED"
+    var name by rememberSaveable(original?.id) { mutableStateOf(original?.name.orEmpty()) }
+    var venue by rememberSaveable(original?.id) { mutableStateOf(original?.location.orEmpty()) }
+    var date by rememberSaveable(original?.id) { mutableStateOf(original?.date ?: LocalDate.now().toString()) }
+    var description by rememberSaveable(original?.id) { mutableStateOf(original?.description.orEmpty()) }
+    var target by rememberSaveable(original?.id) { mutableStateOf((original?.rules?.target ?: 21).toString()) }
+    var cap by rememberSaveable(original?.id) { mutableStateOf((original?.rules?.cap ?: 30).toString()) }
+    var wins by rememberSaveable(original?.id) { mutableStateOf((original?.rules?.gamesToWin ?: 2).toString()) }
+    var lead by rememberSaveable(original?.id) { mutableStateOf((original?.rules?.lead ?: 2).toString()) }
+    var attempted by rememberSaveable(original?.id) { mutableStateOf(false) }
+    val ruleErrors = if (attempted && rulesEditable) organizerRuleErrors(target, cap, wins, lead) else emptyMap()
+    OrganizerFormDialog(
+        if (readOnly) "赛事资料（只读）" else if (original == null) "创建赛事" else "赛事设置",
+        onDismiss, busy = busy, error = serverError, readOnly = readOnly,
         onConfirm = {
-            runCatching {
-                    require(name.isNotBlank() && venue.isNotBlank()) { "请填写名称和地点" }
-                    val body =
-                        mutableMapOf<String, Any>(
-                            "name" to name,
-                            "location" to venue,
-                            "date" to date,
-                            "description" to description,
-                        )
-                    if (rulesEditable) {
-                        val r =
-                            Rules().apply {
-                                this.target = target.toInt()
-                                this.cap = cap.toInt()
-                                gamesToWin = wins.toInt()
-                                this.lead = lead.toInt()
-                            }
-                        Scoring.validateRules(r)
-                        body["rules"] = r
-                    }
-                    onSave(body)
+            attempted = true
+            if (!readOnly && name.isNotBlank() && venue.isNotBlank() &&
+                (!rulesEditable || organizerRuleErrors(target, cap, wins, lead).isEmpty())) {
+                val body = mutableMapOf<String, Any>(
+                    "name" to name.trim(), "location" to venue.trim(),
+                    "date" to date, "description" to description.trim(),
+                )
+                if (rulesEditable) body["rules"] = Rules().apply {
+                    this.target = target.toInt(); this.cap = cap.toInt()
+                    gamesToWin = wins.toInt(); this.lead = lead.toInt()
                 }
-                .onFailure { error = it.message ?: "请输入有效规则" }
+                onSave(body)
+            }
         },
     ) {
-        Input(name, "赛事名称", { name = it })
-        Input(venue, "举办地点", { venue = it })
-        DateField(date, "举办日期", false) { date = it }
-        Input(description, "赛事说明", { description = it })
+        if (readOnly) {
+            Text("赛事已归档，资料仅供查询。", color = Lime)
+            Text("赛事名称：$name")
+            Text("举办地点：$venue")
+            Text("举办日期：$date")
+            Text("赛事说明：${description.ifBlank { "无" }}")
+        } else {
+            OrganizerInput(name, "赛事名称", { name = it }, !busy,
+                error = if (attempted && name.isBlank()) "请填写赛事名称" else null)
+            OrganizerInput(venue, "举办地点", { venue = it }, !busy,
+                error = if (attempted && venue.isBlank()) "请填写举办地点" else null)
+            DateField(date, "举办日期", false, enabled = !busy) { date = it }
+            OrganizerInput(description, "赛事说明", { description = it }, !busy)
+        }
         Text("比赛规则", fontWeight = FontWeight.Bold)
-        if (rulesEditable) {
-            Input(target, "每局目标分", { target = it }, true)
-            Input(cap, "封顶分", { cap = it }, true)
-            Input(wins, "获胜所需局数", { wins = it }, true)
-            Input(lead, "最小领先分", { lead = it }, true)
-        } else Text("已发布比赛，规则已锁定。${original?.rules?.target} 分制。", color = Soft, fontSize = 12.sp)
-        if (error.isNotBlank()) Text(error, color = Rose, fontSize = 12.sp)
+        if (rulesEditable && !readOnly) {
+            OrganizerInput(target, "每局目标分", { target = it }, !busy, true, ruleErrors["target"])
+            OrganizerInput(cap, "封顶分", { cap = it }, !busy, true, ruleErrors["cap"])
+            OrganizerInput(wins, "获胜所需局数", { wins = it }, !busy, true, ruleErrors["wins"])
+            OrganizerInput(lead, "最小领先分", { lead = it }, !busy, true, ruleErrors["lead"])
+        } else {
+            Text("${original?.rules?.gamesToWin}局获胜 · ${original?.rules?.target}分制 · 领先${original?.rules?.lead}分 · ${original?.rules?.cap}分封顶")
+            if (!readOnly) Text("已有比赛发布，规则已锁定。", color = Soft)
+        }
     }
 }
 
@@ -221,32 +229,36 @@ fun MatchForm(
     w: Workspace,
     original: Match?,
     onDismiss: () -> Unit,
+    busy: Boolean = false,
+    serverError: String? = null,
     onSave: (Map<String, Any>) -> Unit,
 ) {
-    var a by remember {
+    var a by rememberSaveable(w.tournament.id, original?.id) {
         mutableStateOf(original?.sideAId ?: w.entrants.firstOrNull()?.id.orEmpty())
     }
-    var b by remember { mutableStateOf(original?.sideBId ?: w.entrants.getOrNull(1)?.id.orEmpty()) }
-    var court by remember {
+    var b by rememberSaveable(w.tournament.id, original?.id) { mutableStateOf(original?.sideBId ?: w.entrants.getOrNull(1)?.id.orEmpty()) }
+    var court by rememberSaveable(w.tournament.id, original?.id) {
         mutableStateOf(original?.courtId ?: w.courts.firstOrNull()?.id.orEmpty())
     }
-    var ref by remember {
+    var ref by rememberSaveable(w.tournament.id, original?.id) {
         mutableStateOf(original?.refereeId ?: w.referees.firstOrNull()?.id.orEmpty())
     }
-    var round by remember { mutableStateOf(original?.round ?: "单打 · 第一轮") }
+    var round by rememberSaveable(w.tournament.id, original?.id) { mutableStateOf(original?.round ?: "单打 · 第一轮") }
     val formatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm")
     fun local(value: String) =
         Instant.parse(value).atZone(ZoneId.of("Asia/Shanghai")).format(formatter)
-    var start by remember {
+    var start by rememberSaveable(w.tournament.id, original?.id) {
         mutableStateOf(original?.startsAt?.let(::local) ?: "${w.tournament.date} 14:00")
     }
-    var end by remember {
+    var end by rememberSaveable(w.tournament.id, original?.id) {
         mutableStateOf(original?.endsAt?.let(::local) ?: "${w.tournament.date} 14:45")
     }
-    var error by remember { mutableStateOf("") }
-    FormDialog(
+    var error by rememberSaveable(w.tournament.id, original?.id) { mutableStateOf("") }
+    OrganizerFormDialog(
         if (original == null) "编排新比赛" else "调整赛程",
         onDismiss,
+        busy = busy, error = serverError,
+        enabled = w.tournament.status != "ARCHIVED" && w.entrants.size >= 2 && w.courts.isNotEmpty() && w.referees.isNotEmpty(),
         onConfirm = {
             runCatching {
                     require(listOf(a, b, court, ref).all { it.isNotBlank() }) { "请先添加参赛者、场地与裁判" }
@@ -278,13 +290,13 @@ fun MatchForm(
     ) {
         if (w.entrants.size < 2 || w.courts.isEmpty() || w.referees.isEmpty())
             Text("需要至少两名参赛者、一块场地和一名裁判。请先在赛事资料中添加。", color = Rose, fontSize = 12.sp)
-        Input(round, "轮次或场次名称", { round = it })
-        SelectField("蓝方", w.entrants.map { it.id to "${it.name} · ${it.unit}" }, a) { a = it }
-        SelectField("红方", w.entrants.map { it.id to "${it.name} · ${it.unit}" }, b) { b = it }
-        SelectField("场地", w.courts.map { it.id to it.name }, court) { court = it }
-        SelectField("执裁裁判", w.referees.map { it.id to it.name }, ref) { ref = it }
-        DateField(start, "预计开始时间", true) { start = it }
-        DateField(end, "预计结束时间", true) { end = it }
+        OrganizerInput(round, "轮次或场次名称", { round = it }, !busy)
+        OrganizerSelectField("蓝方", w.entrants.map { it.id to entrantLabel(it) }, a, !busy) { a = it }
+        OrganizerSelectField("红方", w.entrants.map { it.id to entrantLabel(it) }, b, !busy) { b = it }
+        OrganizerSelectField("场地", w.courts.map { it.id to it.name }, court, !busy) { court = it }
+        OrganizerSelectField("执裁裁判", w.referees.map { it.id to "${it.name} · ${it.username}" }, ref, !busy) { ref = it }
+        DateField(start, "预计开始时间", true, enabled = !busy) { start = it }
+        DateField(end, "预计结束时间", true, enabled = !busy) { end = it }
         Text("云端会检查场地、裁判和参赛者的时间冲突。发布后的调整需要裁判重新接受。", color = Soft, fontSize = 11.sp)
         if (error.isNotBlank()) Text(error, color = Rose, fontSize = 12.sp)
     }
@@ -307,15 +319,16 @@ fun ReasonDialog(
 @Composable
 fun ManagementScreen(state: UiState, vm: CourtsideViewModel, onSettings: () -> Unit) {
     val w = state.workspace ?: return
-    var tab by remember { mutableStateOf("参赛者") }
-    var editKind by remember { mutableStateOf("") }
-    var editId by remember { mutableStateOf<String?>(null) }
-    var name by remember { mutableStateOf("") }
-    var unit by remember { mutableStateOf("") }
-    var archive by remember { mutableStateOf(false) }
-    var account by remember { mutableStateOf(false) }
-    var username by remember { mutableStateOf("") }
-    var password by remember { mutableStateOf("") }
+    var tab by rememberSaveable(w.tournament.id) { mutableStateOf("参赛者") }
+    var editKind by rememberSaveable(w.tournament.id) { mutableStateOf("") }
+    var editId by rememberSaveable(w.tournament.id) { mutableStateOf<String?>(null) }
+    var name by rememberSaveable(w.tournament.id) { mutableStateOf("") }
+    var unit by rememberSaveable(w.tournament.id) { mutableStateOf("") }
+    var archive by rememberSaveable(w.tournament.id) { mutableStateOf(false) }
+    var account by rememberSaveable(w.tournament.id) { mutableStateOf(false) }
+    var username by rememberSaveable(w.tournament.id) { mutableStateOf("") }
+    var password by rememberSaveable(w.tournament.id) { mutableStateOf("") }
+    val archiveReason = archiveBlockReason(w)
     LazyColumn(
         Modifier.fillMaxSize(),
         contentPadding = PaddingValues(20.dp),
@@ -329,7 +342,7 @@ fun ManagementScreen(state: UiState, vm: CourtsideViewModel, onSettings: () -> U
                     color = Soft,
                     fontSize = 12.sp,
                 )
-                OutlinedButton(onClick = onSettings) { Text("赛事设置") }
+                OutlinedButton(onClick = onSettings, enabled = !state.busy) { Text(if (w.tournament.status == "ARCHIVED") "查看赛事资料" else "赛事设置") }
             }
         }
         item { FilterRow(listOf("参赛者", "场地", "裁判"), tab) { tab = it } }
@@ -338,13 +351,14 @@ fun ManagementScreen(state: UiState, vm: CourtsideViewModel, onSettings: () -> U
                 PrimaryButton(
                     "添加参赛者",
                     {
+                        vm.clearOrganizerError()
                         editKind = "entrants"
                         editId = null
                         name = ""
                         unit = ""
                     },
                     Modifier.fillMaxWidth(),
-                    w.tournament.status != "ARCHIVED",
+                    w.tournament.status != "ARCHIVED" && !state.busy,
                     Icons.Outlined.PersonAddAlt,
                 )
             }
@@ -353,18 +367,19 @@ fun ManagementScreen(state: UiState, vm: CourtsideViewModel, onSettings: () -> U
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Column(Modifier.weight(1f)) {
                             Text(e.name, fontWeight = FontWeight.Bold, fontSize = 17.sp)
-                            Text(e.unit, color = Soft, fontSize = 12.sp)
+                            Text("${e.unit} · 编号 ${e.id.take(8)}", color = Soft, fontSize = 14.sp)
                         }
                         ActionIcon(
                             Icons.Outlined.Edit,
                             "编辑 ${e.name}",
                             {
+                                vm.clearOrganizerError()
                                 editKind = "entrants"
                                 editId = e.id
                                 name = e.name
                                 unit = e.unit
                             },
-                            w.tournament.status != "ARCHIVED",
+                            w.tournament.status != "ARCHIVED" && !state.busy,
                         )
                     }
                 }
@@ -374,12 +389,13 @@ fun ManagementScreen(state: UiState, vm: CourtsideViewModel, onSettings: () -> U
                 PrimaryButton(
                     "添加场地",
                     {
+                        vm.clearOrganizerError()
                         editKind = "courts"
                         editId = null
                         name = ""
                     },
                     Modifier.fillMaxWidth(),
-                    w.tournament.status != "ARCHIVED",
+                    w.tournament.status != "ARCHIVED" && !state.busy,
                     Icons.Outlined.AddLocationAlt,
                 )
             }
@@ -393,11 +409,12 @@ fun ManagementScreen(state: UiState, vm: CourtsideViewModel, onSettings: () -> U
                             Icons.Outlined.Edit,
                             "编辑场地",
                             {
+                                vm.clearOrganizerError()
                                 editKind = "courts"
                                 editId = c.id
                                 name = c.name
                             },
-                            w.tournament.status != "ARCHIVED",
+                            w.tournament.status != "ARCHIVED" && !state.busy,
                         )
                     }
                 }
@@ -407,13 +424,14 @@ fun ManagementScreen(state: UiState, vm: CourtsideViewModel, onSettings: () -> U
                 PrimaryButton(
                     "创建裁判账号",
                     {
+                        vm.clearOrganizerError()
                         account = true
                         name = ""
                         username = ""
                         password = ""
                     },
                     Modifier.fillMaxWidth(),
-                    w.tournament.status != "ARCHIVED",
+                    w.tournament.status != "ARCHIVED" && !state.busy,
                     Icons.Outlined.PersonAddAlt,
                 )
             }
@@ -430,7 +448,7 @@ fun ManagementScreen(state: UiState, vm: CourtsideViewModel, onSettings: () -> U
                         else
                             OutlinedButton(
                                 onClick = { vm.resource("members", mapOf("userId" to ref.id)) },
-                                enabled = w.tournament.status != "ARCHIVED",
+                                enabled = w.tournament.status != "ARCHIVED" && !state.busy,
                             ) {
                                 Text("加入赛事")
                             }
@@ -441,64 +459,67 @@ fun ManagementScreen(state: UiState, vm: CourtsideViewModel, onSettings: () -> U
         item {
             Spacer(Modifier.height(16.dp))
             OutlinedButton(
-                onClick = { archive = true },
+                onClick = { vm.clearOrganizerError(); archive = true },
                 enabled =
-                    w.tournament.status != "ARCHIVED" &&
+                    w.tournament.status != "ARCHIVED" && !state.busy &&
                         w.matches.isNotEmpty() &&
                         w.matches.all { it.status in listOf("FINISHED", "CANCELLED") },
                 modifier = Modifier.fillMaxWidth(),
             ) {
                 Text(if (w.tournament.status == "ARCHIVED") "赛事已归档" else "归档赛事")
             }
-            Text("全部场次确认完成或取消后，可以归档保存。", color = Soft, fontSize = 11.sp)
+            Text(archiveReason ?: "全部场次已完成或取消，可以归档保存。", color = Soft, fontSize = 14.sp)
         }
     }
     if (editKind.isNotBlank())
-        FormDialog(
+        OrganizerFormDialog(
             if (editId == null) "添加${if(editKind=="entrants")"参赛者" else "场地"}" else "编辑资料",
             { editKind = "" },
-            enabled = name.isNotBlank(),
+            enabled = name.isNotBlank(), busy = state.busy, error = state.organizerError,
             onConfirm = {
-                vm.resource(editKind, mapOf("name" to name, "unit" to unit), editId)
-                editKind = ""
+                vm.resource(editKind, mapOf("name" to name.trim(), "unit" to unit.trim()), editId) { editKind = "" }
             },
         ) {
-            Input(name, "名称", { name = it })
-            if (editKind == "entrants") Input(unit, "所属单位", { unit = it })
+            OrganizerInput(name, "名称", { name = it }, !state.busy)
+            if (editKind == "entrants") OrganizerInput(unit, "所属单位", { unit = it }, !state.busy)
         }
     if (archive)
         AlertDialog(
-            onDismissRequest = { archive = false },
+            onDismissRequest = { if (!state.busy) archive = false },
             title = { Text("归档赛事") },
-            text = { Text("归档后赛事和比赛资料将只供查询。") },
+            text = { Column { Text("归档后赛事和比赛资料将只供查询。")
+                state.organizerError?.let { Text(it, color = Rose) } } },
             confirmButton = {
                 TextButton(
                     onClick = {
-                        vm.editTournament(mapOf("status" to "ARCHIVED"))
-                        archive = false
-                    }
+                        vm.editTournament(mapOf("status" to "ARCHIVED")) { archive = false }
+                    }, enabled = !state.busy
                 ) {
-                    Text("确认归档")
+                    Text(if (state.busy) "正在归档…" else "确认归档")
                 }
             },
-            dismissButton = { TextButton(onClick = { archive = false }) { Text("返回") } },
+            dismissButton = { TextButton(onClick = { archive = false }, enabled = !state.busy) { Text("返回") } },
         )
     if (account)
-        FormDialog(
+        OrganizerFormDialog(
             "创建并加入裁判",
             { account = false },
-            enabled = name.isNotBlank() && username.length >= 3 && password.length >= 10,
+            enabled = name.isNotBlank() && refereeAccountError(username, password) == null,
+            busy = state.busy, error = state.organizerError,
             onConfirm = {
-                vm.createReferee(username, name, password)
-                account = false
+                vm.createReferee(username, name.trim(), password) { account = false }
             },
         ) {
-            Input(name, "裁判姓名", { name = it })
-            Input(username, "登录账号（字母与数字）", { username = it })
+            OrganizerInput(name, "裁判姓名", { name = it }, !state.busy)
+            OrganizerInput(username, "登录账号（3～40位）", { username = it }, !state.busy,
+                error = if (username.isNotEmpty() && !username.matches(Regex("[a-zA-Z0-9_.-]{3,40}"))) "仅支持字母、数字、下划线、点、短横线，共3～40位" else null)
             OutlinedTextField(
                 password,
                 { password = it },
-                label = { Text("初始密码（至少10位）") },
+                label = { Text("初始密码（10～72位）") },
+                enabled = !state.busy,
+                isError = password.isNotEmpty() && (password.length !in 10..72 || password != password.trim()),
+                supportingText = { if (password.isNotEmpty() && (password.length !in 10..72 || password != password.trim())) Text("密码需为10～72位，首尾不能有空白") },
                 visualTransformation =
                     androidx.compose.ui.text.input.PasswordVisualTransformation(),
                 modifier = Modifier.fillMaxWidth(),
@@ -542,61 +563,43 @@ fun ReviewDialog(
     s: Submission,
     m: Match?,
     onDismiss: () -> Unit,
+    busy: Boolean = false,
+    serverError: String? = null,
     onReview: (Boolean, String) -> Unit,
 ) {
     if (m == null) return
-    var returning by remember { mutableStateOf(false) }
-    Dialog(onDismissRequest = onDismiss) {
-        Surface(
-            shape = RoundedCornerShape(24.dp),
-            color = PanelColor,
-            modifier = Modifier.heightIn(max = 650.dp),
-        ) {
-            Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
-                Text(
-                    if (s.status == "PENDING_REVIEW") "核验比赛成绩" else "正式成绩",
-                    fontSize = 23.sp,
-                    fontWeight = FontWeight.Bold,
-                )
-                Text(
-                    "${m.sideA}   ${Scoring.wins(s.score,0)} : ${Scoring.wins(s.score,1)}   ${m.sideB}",
-                    fontWeight = FontWeight.Bold,
-                    fontSize = 19.sp,
-                )
-                Column(
-                    Modifier.weight(1f, false).verticalScroll(rememberScrollState()),
-                    verticalArrangement = Arrangement.spacedBy(14.dp),
-                ) {
-                    Text("${if(s.winner==0)m.sideA else m.sideB} 获胜", color = Lime)
-                    if (s.score.retirementWinner >= 0)
-                        Text("弃权记录：${s.score.retirementReason}", color = Rose, fontSize = 12.sp)
-                    s.score.games.forEachIndexed { i, g ->
-                        Text("第 ${i+1} 局  ${g.a} – ${g.b}", fontWeight = FontWeight.Bold)
-                        RallyGrid(g.rallies)
-                        if (g.corrected)
-                            Text("局分更正：${g.correctionNote}", color = Rose, fontSize = 11.sp)
-                    }
-                    Text(
-                        "双方确认：${if(s.score.aConfirmed)"蓝方已确认" else "蓝方未确认"} / ${if(s.score.bConfirmed)"红方已确认" else "红方未确认"}",
-                        color = Soft,
-                        fontSize = 11.sp,
-                    )
-                    Text("裁判 ${m.refereeName} · 回执 ${s.id.take(8)}", color = Soft, fontSize = 10.sp)
-                }
-                if (s.status == "PENDING_REVIEW") {
-                    PrimaryButton("确认正式成绩", { onReview(true, "") }, Modifier.fillMaxWidth())
-                    OutlinedButton(
-                        onClick = { returning = true },
-                        modifier = Modifier.fillMaxWidth(),
-                    ) {
-                        Text("退回更正", color = Rose)
-                    }
-                } else PrimaryButton("完成", onDismiss, Modifier.fillMaxWidth())
-            }
+    var returning by rememberSaveable(s.id) { mutableStateOf(false) }
+    var reason by rememberSaveable(s.id) { mutableStateOf("") }
+    val pending = s.status == "PENDING_REVIEW"
+    OrganizerFormDialog(
+        if (pending) "核验比赛成绩" else "正式成绩", onDismiss,
+        confirmLabel = if (pending) "确认正式成绩" else "完成",
+        busy = busy, error = serverError,
+        onConfirm = { if (pending) onReview(true, "") else onDismiss() },
+    ) {
+        OrganizerPlayers(m)
+        Text("局胜 ${Scoring.wins(s.score, 0)} : ${Scoring.wins(s.score, 1)}", fontWeight = FontWeight.Bold, fontSize = 22.sp)
+        Text("${if (s.winner == 0) m.sideA else m.sideB} 获胜", color = Lime)
+        if (s.score.retirementWinner >= 0)
+            Text("弃权记录：${s.score.retirementReason}", color = Rose, fontSize = 14.sp)
+        s.score.games.forEachIndexed { i, g ->
+            Text("第 ${i + 1} 局  ${g.a} – ${g.b}", fontWeight = FontWeight.Bold)
+            RallyGrid(g.rallies)
+            if (g.corrected) Text("局分更正：${g.correctionNote}", color = Rose, fontSize = 14.sp)
+        }
+        if (s.score.rallies.isNotEmpty()) {
+            Text("第 ${s.score.games.size + 1} 局（未封存） ${Scoring.points(s.score.rallies, 0)} – ${Scoring.points(s.score.rallies, 1)}",
+                fontWeight = FontWeight.Bold)
+            RallyGrid(s.score.rallies)
+        }
+        Text("双方确认：${if (s.score.aConfirmed) "蓝方已确认" else "蓝方未确认"} / ${if (s.score.bConfirmed) "红方已确认" else "红方未确认"}", color = Soft)
+        Text("裁判 ${m.refereeName} · 回执 ${s.id.take(8)}", color = Soft, fontSize = 14.sp)
+        if (pending) OutlinedButton(onClick = { returning = true }, enabled = !busy, modifier = Modifier.fillMaxWidth()) {
+            Text("退回更正", color = Rose)
         }
     }
-    if (returning)
-        ReasonDialog("退回裁判更正", "原始提交会保留，裁判将收到原因并重新确认成绩。", { returning = false }) {
-            onReview(false, it)
-        }
+    if (returning) OrganizerReasonDialog(
+        "退回裁判更正", "原始提交会保留，裁判将收到原因并重新确认成绩。",
+        busy, serverError, { returning = false }, reason, { reason = it },
+    ) { onReview(false, it) }
 }

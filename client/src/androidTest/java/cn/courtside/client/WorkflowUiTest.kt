@@ -184,7 +184,7 @@ class WorkflowUiTest {
         screenshot("02-referee-home")
         compose.onNodeWithContentDescription("账户与连接").performClick()
         compose.onNodeWithText("图片来源与授权").performClick()
-        compose.onNodeWithText("工作台 · 林丹得分庆祝").assertIsDisplayed()
+        compose.onNodeWithText("工作台 · 林丹得分庆祝", substring = true).assertIsDisplayed()
         compose.onAllNodesWithText("原图与作者")[0].assertHasClickAction()
         screenshot("02a-photo-credits")
         compose.onNodeWithText("完成").performClick()

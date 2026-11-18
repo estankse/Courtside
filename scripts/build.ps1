@@ -1,5 +1,8 @@
-param([switch]$ServerOnly,[switch]$SkipTests)
+﻿param([switch]$ServerOnly,[switch]$SkipTests)
 $ErrorActionPreference = 'Stop'
+if (-not $ServerOnly) {
+    & (Join-Path $PSScriptRoot 'assert-android-account.ps1') -Purpose 'debug APK packaging'
+}
 $projectRoot = Split-Path -Parent $PSScriptRoot
 $workspaceTmp = Join-Path (Split-Path -Parent $projectRoot) 'tmp'
 $jdkPath = Join-Path $workspaceTmp 'toolchain\jdk'

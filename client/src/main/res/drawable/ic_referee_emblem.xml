@@ -1,0 +1,5 @@
+<inset xmlns:android="http://schemas.android.com/apk/res/android"
+    android:inset="16.67%">
+    <bitmap android:src="@drawable/referee_brand_badge"
+        android:gravity="fill" android:antialias="true" android:filter="true" />
+</inset>

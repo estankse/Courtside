@@ -1,5 +1,6 @@
-param([string]$Serial='emulator-5556',[switch]$UseAdbReverse)
+﻿param([string]$Serial='emulator-5556',[switch]$UseAdbReverse)
 $ErrorActionPreference='Stop'
+& (Join-Path $PSScriptRoot 'assert-android-account.ps1') -Purpose 'device UI testing'
 $projectRoot=Split-Path -Parent $PSScriptRoot
 $workspaceTmp=Join-Path (Split-Path -Parent $projectRoot) 'tmp'
 $sdkLine=Get-Content -LiteralPath (Join-Path $projectRoot 'local.properties') | Where-Object { $_.StartsWith('sdk.dir=') } | Select-Object -First 1

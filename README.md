@@ -10,9 +10,25 @@
 4. 执行 `./scripts/start-server.ps1`，或 `./scripts/start-server.ps1 -Background` 在后台启动。健康检查为 [本机服务](http://localhost:8080/api/health)。前台用 Ctrl+C 停止，后台可执行 `./scripts/stop-server.ps1`。
 5. 分别安装 `dist/courtside-organizer.apk` 与 `dist/courtside-referee.apk`。Android 模拟器默认连接 `http://10.0.2.2:8080/api`。真机与电脑连接同一局域网，在登录页“服务连接设置”填写 `http://电脑的局域网IP:8080/api`。
 
+### 运行项目时反复出现 USB 调试授权
+
+请让 Android Studio 和 ADB 后台始终使用同一个 Windows 账号。若 ADB 被 CodexSandboxOffline 等另一个账号启动，模拟器会看到不同的 RSA 公钥，再次弹出授权提示。
+
+在运行 Android Studio 的 Windows 账号下执行：
+
+```powershell
+& ".\scripts\repair-adb.ps1"
+```
+
+脚本会重启 ADB、检查后台所属账号并列出设备；不会删除调试密钥、修改设备授权列表或清除应用数据。所有已连接的调试设备会短暂断开后重新连接。该脚本兼容 Windows PowerShell 5.1，拒绝从 CodexSandboxOffline 账号运行。修复后重新点击 Android Studio 的运行按钮；若仍提示授权，请手动确认当前 Windows 账号的调试密钥。
+
+为避免复发，`build.ps1`（包含 Android APK 时）、`test-ui.ps1` 和 `repair-adb.ps1` 都会先检查账号。从 `CodexSandboxOffline` 账号运行时，会在启动 Gradle/ADB 前停止。纯服务端 `build.ps1 -ServerOnly` 不受此限制。直接执行原始 `adb`、`emulator` 或 Gradle 设备任务时，也要使用运行 Android Studio 的 Windows 账号；关键是账号一致。项目和 Android Studio 工作目录的 `AGENTS.md` 已记录此要求，供后续自动化读取。已经运行中的其他聊天需要重新读取规则；项目保护无法拦截其他目录中手工执行的原始 ADB 命令。
+
 调试 APK 允许 HTTP 局域网联调；正式 release 配置只允许 HTTPS。部署到公网时应配置 HTTPS 反向代理，并替换演示账号及数据库凭证。没有云账号时，服务端可先在本机运行，两个客户端仍然通过真实 HTTP 请求交换数据。
 
 首次启动会创建一项示例赛事、8 名参赛者、2 块场地、2 名裁判和4场已发布比赛。不会在后续启动时重置数据。
+
+需要一组新的体验比赛时，服务启动后执行 `./scripts/prepare-test-matches.ps1`。脚本按北京时间当天准备标准21分和快速5分两组共8场比赛，分配给 `referee`，其中1场为赛事组发布测试保留草稿；同一天重复执行沿用现有场次，换 `-Batch` 可新增一轮。旧比赛和比分不清空。具体步骤见[体验测试用例](docs/体验测试用例_20261117.md)。
 
 | 身份 | 演示账号 | 演示密码 |
 | --- | --- | --- |

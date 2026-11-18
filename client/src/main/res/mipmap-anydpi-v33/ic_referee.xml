@@ -1,0 +1,5 @@
+<adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
+    <background android:drawable="@drawable/ic_referee_plate" />
+    <foreground android:drawable="@drawable/ic_referee_emblem" />
+    <monochrome android:drawable="@drawable/ic_referee_monochrome" />
+</adaptive-icon>

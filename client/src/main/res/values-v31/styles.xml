@@ -1,0 +1,8 @@
+<resources>
+    <style name="CourtsideRefereeTheme" parent="CourtsideTheme">
+        <item name="android:windowSplashScreenBackground">#080F18</item>
+        <item name="android:windowSplashScreenAnimatedIcon">@mipmap/ic_referee</item>
+        <item name="android:windowSplashScreenIconBackgroundColor">#07162B</item>
+        <item name="android:windowSplashScreenAnimationDuration">200</item>
+    </style>
+</resources>

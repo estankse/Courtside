@@ -7,4 +7,5 @@
         <item name="android:windowActionModeOverlay">true</item>
         <item name="android:windowBackground">#080F18</item>
     </style>
+    <style name="CourtsideRefereeTheme" parent="CourtsideTheme" />
 </resources>

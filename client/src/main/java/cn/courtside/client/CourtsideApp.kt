@@ -130,6 +130,7 @@ fun CourtsideApp(organizer: Boolean, vm: CourtsideViewModel = viewModel()) {
                     ) {
                         if (state.route != "home")
                             ActionIcon(Icons.Outlined.ArrowBack, "返回工作台", { vm.navigate("home") })
+                        else if (!organizer) RefereeBrandMark(Modifier.size(36.dp))
                         else
                             Box(
                                 Modifier.size(32.dp)
@@ -286,108 +287,117 @@ private fun LoginScreen(
     var password by rememberSaveable(organizer) { mutableStateOf(if (organizer) "" else "Courtside2026!") }
     var address by rememberSaveable { mutableStateOf(url) }
     var connection by remember { mutableStateOf(false) }
-    LazyColumn(
-        Modifier.fillMaxSize().background(Ink).safeDrawingPadding(),
-        contentPadding = PaddingValues(24.dp),
-        verticalArrangement = Arrangement.spacedBy(20.dp),
-    ) {
-        item {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(Icons.Outlined.SportsTennis, null, Modifier.size(28.dp), tint = Lime)
-                Spacer(Modifier.width(10.dp))
-                Text("羽序", fontWeight = FontWeight.Black, fontSize = 23.sp)
-                Spacer(Modifier.weight(1f))
-                Eyebrow("COURTSIDE / 01", Lime)
-            }
-        }
-        item {
-            Box(Modifier.fillMaxWidth().height(230.dp)) {
-                if (organizer) CourtArt(Modifier.fillMaxSize(), true)
-                else RefereeHeroArt(Modifier.fillMaxSize(), RefereeScene.Login)
-                Column(
-                    Modifier.align(Alignment.CenterStart),
-                    verticalArrangement = Arrangement.spacedBy(10.dp),
-                ) {
-                    Eyebrow(if (organizer) "RUN THE TOURNAMENT" else "OWN THE COURT", Lime)
-                    Text(
-                        if (organizer) "组织有序\n精彩上场" else "专注球场\n掌握每一分",
-                        fontSize = 38.sp,
-                        lineHeight = 48.sp,
-                        fontWeight = FontWeight.Black,
-                        fontFamily = if (organizer) FontFamily.Default else PlayerScript,
-                    )
-                    Text(
-                        if (organizer) "从第一场安排，到最后一分确认。" else "赛程、计分与回顾，在这里衔接。",
-                        fontSize = 12.sp,
-                        color = Soft,
-                    )
+    Box(Modifier.fillMaxSize().background(Ink)) {
+        if (!organizer) RefereeEntryArtwork(Modifier.matchParentSize(), subdued = true)
+        LazyColumn(
+            Modifier.fillMaxSize().safeDrawingPadding(),
+            contentPadding = PaddingValues(24.dp),
+            verticalArrangement = Arrangement.spacedBy(20.dp),
+        ) {
+            item {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    if (organizer) Icon(Icons.Outlined.SportsTennis, null, Modifier.size(28.dp), tint = Lime)
+                    else RefereeBrandMark(Modifier.size(36.dp))
+                    Spacer(Modifier.width(10.dp))
+                    Text("羽序", fontWeight = FontWeight.Black, fontSize = 23.sp)
+                    Spacer(Modifier.weight(1f))
+                    Eyebrow("COURTSIDE / 01", Lime)
                 }
             }
-        }
-        item {
-            Panel {
-                Text(
-                    if (organizer) "赛事组登录" else "裁判登录",
-                    fontSize = 22.sp,
-                    fontWeight = FontWeight.Bold,
-                )
-                Text("使用赛事组提供的账号进入工作台", color = Soft, fontSize = 12.sp)
-                OutlinedTextField(
-                    username,
-                    { username = it },
-                    label = { Text("账号") },
-                    leadingIcon = { Icon(Icons.Outlined.PersonOutline, null) },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(13.dp),
-                )
-                OutlinedTextField(
-                    password,
-                    { password = it },
-                    label = { Text("密码") },
-                    leadingIcon = { Icon(Icons.Outlined.LockOpen, null) },
-                    visualTransformation = PasswordVisualTransformation(),
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(13.dp),
-                )
-                if (!error.isNullOrBlank()) Text(error, color = Rose, fontSize = 12.sp)
-                PrimaryButton(
-                    if (busy) "正在连接…" else "进入${if(organizer)"赛事组" else "裁判"}工作台",
-                    { onLogin(address, username, password) },
-                    Modifier.fillMaxWidth(),
-                    !busy && username.isNotBlank() && password.isNotBlank(),
-                    Icons.Outlined.ArrowForward,
-                )
+            item {
+                Box(Modifier.fillMaxWidth().height(230.dp)) {
+                    if (organizer) CourtArt(Modifier.fillMaxSize(), true)
+                    else {
+                        RefereeEntryArtwork(Modifier.fillMaxSize())
+                        Box(Modifier.matchParentSize().background(
+                            Brush.horizontalGradient(0f to Ink.copy(alpha = .8f), 1f to Color.Transparent)
+                        ))
+                    }
+                    Column(
+                        Modifier.align(Alignment.CenterStart),
+                        verticalArrangement = Arrangement.spacedBy(10.dp),
+                    ) {
+                        Eyebrow(if (organizer) "RUN THE TOURNAMENT" else "OWN THE COURT", Lime)
+                        Text(
+                            if (organizer) "组织有序\n精彩上场" else "专注球场\n掌握每一分",
+                            fontSize = 38.sp,
+                            lineHeight = 48.sp,
+                            fontWeight = FontWeight.Black,
+                            fontFamily = if (organizer) FontFamily.Default else PlayerScript,
+                        )
+                        Text(
+                            if (organizer) "从第一场安排，到最后一分确认。" else "赛程、计分与回顾，在这里衔接。",
+                            fontSize = 12.sp,
+                            color = Soft,
+                        )
+                    }
+                }
             }
-        }
-        item {
-            TextButton(onClick = { connection = !connection }, modifier = Modifier.fillMaxWidth()) {
-                Icon(Icons.Outlined.Dns, null, Modifier.size(16.dp))
-                Spacer(Modifier.width(8.dp))
-                Text("服务连接设置")
-            }
-            AnimatedVisibility(connection) {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            item {
+                Panel {
+                    Text(
+                        if (organizer) "赛事组登录" else "裁判登录",
+                        fontSize = 22.sp,
+                        fontWeight = FontWeight.Bold,
+                    )
+                    Text("使用赛事组提供的账号进入工作台", color = Soft, fontSize = 12.sp)
                     OutlinedTextField(
-                        address,
-                        { address = it },
-                        label = { Text("云服务地址") },
-                        supportingText = { Text("模拟器：10.0.2.2；真机：填写电脑的局域网地址") },
+                        username,
+                        { username = it },
+                        label = { Text("账号") },
+                        leadingIcon = { Icon(Icons.Outlined.PersonOutline, null) },
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(13.dp),
                     )
-                    Text("本机示例账号已填入。连接自己的服务后，使用对应账号登录。", fontSize = 11.sp, color = Soft)
+                    OutlinedTextField(
+                        password,
+                        { password = it },
+                        label = { Text("密码") },
+                        leadingIcon = { Icon(Icons.Outlined.LockOpen, null) },
+                        visualTransformation = PasswordVisualTransformation(),
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(13.dp),
+                    )
+                    if (!error.isNullOrBlank()) Text(error, color = Rose, fontSize = 12.sp)
+                    PrimaryButton(
+                        if (busy) "正在连接…" else "进入${if(organizer)"赛事组" else "裁判"}工作台",
+                        { onLogin(address, username, password) },
+                        Modifier.fillMaxWidth(),
+                        !busy && username.isNotBlank() && password.isNotBlank(),
+                        Icons.Outlined.ArrowForward,
+                    )
                 }
             }
-        }
-        item {
-            Text(
-                "COURTSIDE  ·  羽毛球赛事与裁判协同",
-                fontSize = 10.sp,
-                color = Soft,
-                modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp),
-            )
+            item {
+                TextButton(onClick = { connection = !connection }, modifier = Modifier.fillMaxWidth()) {
+                    Icon(Icons.Outlined.Dns, null, Modifier.size(16.dp))
+                    Spacer(Modifier.width(8.dp))
+                    Text("服务连接设置")
+                }
+                AnimatedVisibility(connection) {
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        OutlinedTextField(
+                            address,
+                            { address = it },
+                            label = { Text("云服务地址") },
+                            supportingText = { Text("模拟器：10.0.2.2；真机：填写电脑的局域网地址") },
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                        Text("本机示例账号已填入。连接自己的服务后，使用对应账号登录。", fontSize = 11.sp, color = Soft)
+                    }
+                }
+            }
+            item {
+                Text(
+                    "COURTSIDE  ·  羽毛球赛事与裁判协同",
+                    fontSize = 10.sp,
+                    color = Soft,
+                    modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp),
+                )
+            }
         }
     }
 }

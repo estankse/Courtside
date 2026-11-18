@@ -253,4 +253,61 @@ class WorkflowTest {
             .getStatusCode()
             .value());
   }
+  @Test
+  void invalidProgressIsRejectedWithoutReplacingGoodSnapshot() {
+    Match m = fixture();
+    String p = "/matches/" + m.id;
+    ok("POST", p + "/accept", Map.of("scheduleVersion", 1), ref.token, Match.class);
+    m = ok("POST", p + "/start",
+        Map.of("scheduleVersion", 1, "deviceId", "test-device"), ref.token, Match.class);
+    ScoreSession score = completed(m);
+    ok("PUT", p + "/progress", score, ref.token, Match.class);
+    score.localSeq++;
+    score.games.add(null);
+    assertEquals(400, call("PUT", p + "/progress", score, ref.token).getStatusCode().value());
+    score.games.remove(score.games.size() - 1);
+    score.games.get(0).rallies.set(0, 99);
+    assertEquals(400, call("PUT", p + "/progress", score, ref.token).getStatusCode().value());
+    Match saved = ok("GET", p, null, ref.token, Match.class);
+    assertEquals(1, saved.progress.games.size());
+    assertEquals(0, saved.progress.games.get(0).rallies.get(0).intValue());
+    Submission accepted = ok("POST", p + "/submissions", completed(m), ref.token, Submission.class);
+    assertEquals("PENDING_REVIEW", accepted.status);
+  }
+
+  @Test
+  void correctionKeepsOriginalRalliesAndStillSupportsRetryAndConfirmation() {
+    Match m = fixture();
+    String p = "/matches/" + m.id;
+    ok("POST", p + "/accept", Map.of("scheduleVersion", 1), ref.token, Match.class);
+    m = ok("POST", p + "/start",
+        Map.of("scheduleVersion", 1, "deviceId", "test-device"), ref.token, Match.class);
+    ScoreSession score = completed(m);
+    Submission first = ok("POST", p + "/submissions", score, ref.token, Submission.class);
+    ok("POST", "/submissions/" + first.id + "/return", Map.of("reason", "核对胜方"),
+        org.token, Submission.class);
+    score.correctionRound = 1;
+    score.submissionId = UUID.randomUUID().toString();
+    score.localSeq++;
+    Game game = score.games.get(0);
+    game.a = 0;
+    game.b = 3;
+    game.corrected = true;
+    game.correctionNote = "现场核对后更正胜方";
+    List<Integer> original = new ArrayList<>(game.rallies);
+    game.rallies.clear();
+    assertEquals(400, call("POST", p + "/submissions", score, ref.token).getStatusCode().value());
+    assertEquals(400, call("PUT", p + "/progress", score, ref.token).getStatusCode().value());
+    game.rallies = original;
+    ok("PUT", p + "/progress", score, ref.token, Match.class);
+    Submission corrected = ok("POST", p + "/submissions", score, ref.token, Submission.class);
+    assertEquals(1, corrected.winner);
+    assertEquals(corrected.id, ok("POST", p + "/submissions", score, ref.token, Submission.class).id);
+    ok("POST", "/submissions/" + corrected.id + "/confirm", Map.of(), org.token, Submission.class);
+    assertEquals("FINISHED", ok("GET", p, null, ref.token, Match.class).status);
+    Submission originalReceipt = ok("GET", "/submissions/" + first.id, null, ref.token, Submission.class);
+    assertEquals(original, originalReceipt.score.games.get(0).rallies);
+    assertEquals(0, originalReceipt.winner);
+  }
+
 }

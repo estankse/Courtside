@@ -401,21 +401,21 @@ public class CompetitionService {
     check(m.correctionRound == s.correctionRound, 409, "STALE_ROUND", "成绩已退回更正，请刷新后再操作");
   }
 
+  void validateCorrection(Match m, ScoreSession s) {
+    if (m.correctionRound > 0) {
+      Submission previous = db.get("submissions", m.currentSubmissionId, Submission.class);
+      ScoreValidation.correction(s, previous.score);
+    }
+  }
+
   public Match progress(String id, ScoreSession s, User u) {
     Match m = db.get("matches", id, Match.class);
     db.lock(m.tournamentId);
     m = db.get("matches", id, Match.class);
     session(m, s, u);
     check(m.status.equals("IN_PROGRESS"), 409, "STATE_CONFLICT", "比赛已提交或完成");
-    check(
-        s.games != null
-            && s.rallies != null
-            && s.localSeq >= 0
-            && s.games.size() <= 5
-            && s.rallies.size() <= 80,
-        400,
-        "VALIDATION",
-        "比分数据超出范围");
+    ScoreValidation.snapshot(s, m.rules);
+    validateCorrection(m, s);
     if (m.progress == null || s.localSeq > m.progress.localSeq) {
       m.progress = s;
       save(m);
@@ -447,6 +447,7 @@ public class CompetitionService {
     session(m, score, u);
     check(m.status.equals("IN_PROGRESS"), 409, "STATE_CONFLICT", "比赛当前不能提交成绩");
     Scoring.validateResult(score, m.rules);
+    validateCorrection(m, score);
     Submission s = new Submission();
     s.id = score.submissionId;
     s.matchId = id;

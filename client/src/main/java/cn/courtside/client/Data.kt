@@ -52,6 +52,13 @@ class Repository(context: Context) {
         prefs.getString("login", null)?.let {
             runCatching { gson.fromJson(it, Login::class.java) }.getOrNull()
         }
+        private set
+
+    init {
+        // Earlier organizer builds saved the session. Discard it on the first cold start after updating.
+        if (login?.user?.role == "ORGANIZER") updateLogin(null)
+    }
+
     val owner: String
         get() = "${baseUrl.hashCode()}:${login?.user?.id.orEmpty()}"
 
@@ -68,9 +75,10 @@ class Repository(context: Context) {
         prefs.edit().putString("baseUrl", baseUrl).apply()
     }
 
-    fun persistLogin(value: Login?) {
+    fun updateLogin(value: Login?) {
         login = value
-        prefs.edit().putString("login", value?.let(gson::toJson)).apply()
+        val storedLogin = value?.takeUnless { it.user.role == "ORGANIZER" }
+        prefs.edit().putString("login", storedLogin?.let(gson::toJson)).apply()
     }
 
     suspend fun <T> request(method: String, path: String, type: Class<T>, body: Any? = null): T =

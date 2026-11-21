@@ -166,13 +166,13 @@ class CourtsideViewModel(application: Application) : AndroidViewModel(applicatio
         require((login.user.role == "ORGANIZER") == organizer) {
             "请使用${if (organizer) "赛事组" else "裁判"}账号登录本客户端"
         }
-        repo.persistLogin(login)
+        repo.updateLogin(login)
         _ui.value = UiState(login = login)
         refresh(true)
     }
 
     fun logout() {
-        repo.persistLogin(null)
+        repo.updateLogin(null)
         _ui.value = UiState()
     }
 

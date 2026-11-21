@@ -57,7 +57,7 @@ class OrganizerUiTest {
         return compose.runOnIdle {
             ViewModelProvider(store, ViewModelProvider.AndroidViewModelFactory(application))[CourtsideViewModel::class.java].also { vm ->
                 vm.repo.setUrl(server.url)
-                vm.repo.persistLogin(Login().apply {
+                vm.repo.updateLogin(Login().apply {
                     token = "isolated-test-token"
                     user = User().apply { id = "test-organizer"; role = "ORGANIZER" }
                 })
@@ -266,14 +266,21 @@ class OrganizerUiTest {
         }
     }
 
-    @Test fun organizerPasswordStartsEmptyWhileRefereeDemoLoginIsPreserved() {
-        application.getSharedPreferences("courtside", 0).edit().clear().commit()
+    @Test fun organizerColdStartIgnoresOldLoginAndAsksForPassword() {
+        val prefs = application.getSharedPreferences("courtside", 0)
+        val oldLogin = Login().apply {
+            token = "old-organizer-token"
+            user = User().apply { id = "test-organizer"; role = "ORGANIZER" }
+        }
+        prefs.edit().clear().putString("login", Gson().toJson(oldLogin)).commit()
         val store = ViewModelStore().also { stores += it }
         val vm = ViewModelProvider(store, ViewModelProvider.AndroidViewModelFactory(application))[CourtsideViewModel::class.java]
         var organizer by mutableStateOf(true)
         compose.setContent { CourtsideApp(organizer, vm) }
         compose.onNodeWithText("密码").assert(SemanticsMatcher.expectValue(SemanticsProperties.EditableText, AnnotatedString("")))
         compose.onNodeWithText("进入赛事组工作台").performScrollTo().assertIsNotEnabled()
+        assertNull(vm.ui.value.login)
+        assertFalse(prefs.contains("login"))
         compose.runOnIdle { organizer = false }
         compose.onNodeWithText("进入裁判工作台").performScrollTo().assertIsEnabled()
     }
@@ -305,6 +312,136 @@ class OrganizerUiTest {
         capture("organizer-offline")
     }
 
+    @Test fun scheduleFiltersCombineAndHistoryRecordsAreReadOnly() {
+        val work = Workspace().apply {
+            tournament = Tournament().apply { id = "schedule-test"; name = "赛程测试" }
+            courts = listOf(
+                Court().apply { id = "court-a"; name = "测试一号场" },
+                Court().apply { id = "court-b"; name = "测试二号场" },
+            )
+        }
+        fun match(id: String, roundName: String, court: Court, day: String, state: String) =
+            Match().apply {
+                this.id = id
+                tournamentId = work.tournament.id
+                round = roundName
+                courtId = court.id
+                this.court = court.name
+                startsAt = "2026-11-${day}T16:30:00Z"
+                endsAt = "2026-11-${day}T17:00:00Z"
+                status = state
+                sideA = "蓝方选手"
+                sideB = "红方选手"
+            }
+        val cancelled = match("cancelled", "目标取消场次", work.courts[0], "16", "CANCELLED").apply {
+            cancelReason = "场馆临时闭馆"
+        }
+        val pending = match("pending", "待核验场次", work.courts[0], "16", "PENDING_REVIEW").apply {
+            currentSubmissionId = "current"
+        }
+        work.matches = listOf(
+            cancelled, pending,
+            match("different-court", "其他场地场次", work.courts[1], "16", "CANCELLED"),
+            match("different-day", "其他日期场次", work.courts[0], "17", "CANCELLED"),
+        )
+        work.submissions = listOf(
+            Submission().apply {
+                id = "previous"; matchId = pending.id; status = "RETURNED"
+                createdAt = "2026-11-16T17:00:00Z"
+                reviewedAt = "2026-11-16T17:05:00Z"
+                reviewReason = "请核对第二局比分"
+                winner = 0
+            },
+            Submission().apply {
+                id = "current"; matchId = pending.id; status = "PENDING_REVIEW"
+                createdAt = "2026-11-16T17:10:00Z"
+                score.correctionRound = 1
+                score.games.add(Game().apply { a = 21; b = 18; corrected = true; correctionNote = "按现场记录更正" })
+                winner = 0
+            },
+        )
+        val fixture = openWorkspace(work)
+        compose.onNodeWithText("赛程").performClick()
+        scrollToText("筛选赛程").performClick()
+        scrollToText("比赛日期").performClick()
+        selectMenuOption("2026-11-17")
+        scrollToText("比赛场地").performClick()
+        selectMenuOption("测试一号场")
+        scrollToText("比赛状态").performClick()
+        selectMenuOption("已取消")
+        scrollToText("符合条件 1 场").assertIsDisplayed()
+        scrollToText("目标取消场次").performClick()
+        scrollToText("场馆临时闭馆").assertIsDisplayed()
+        compose.onNodeWithContentDescription("返回工作台").performClick()
+        scrollToText("清空筛选").performClick()
+        scrollToText("其他场地场次").assertIsDisplayed()
+        scrollToText("待核验场次").performClick()
+        scrollToText("提交与核验历史 · 2").assertIsDisplayed()
+        compose.onNodeWithText("展开").performClick()
+        scrollToText("已退回 · 第 1 次提交").assertIsDisplayed()
+        scrollToText("请核对第二局比分").assertIsDisplayed()
+        scrollToText("待核验 · 第 2 次提交 · 当前有效提交").assertIsDisplayed()
+        compose.onAllNodesWithText("查看提交详情").onFirst().performClick()
+        compose.onNodeWithText("提交详情").assertIsDisplayed()
+        compose.onNodeWithText("确认正式成绩").assertDoesNotExist()
+        compose.onNodeWithText("退回更正").assertDoesNotExist()
+        compose.onNodeWithText("局分更正：按现场记录更正").performScrollTo().assertIsDisplayed()
+        assertEquals(0, fixture.writes.get())
+    }
+
+    @Test fun overviewCountsAllStatusesAndAuditShowsOldUnabridgedRecords() {
+        val work = Workspace().apply {
+            tournament = Tournament().apply { id = "audit-test"; name = "审计测试" }
+            matches = organizerMatchStatuses.map { (state, _) ->
+                Match().apply { id = state; status = state; round = "测试场次 $state" }
+            }
+        }
+        val longDetail = "这是用于检查全文展示的长操作记录。".repeat(8) + "最后的细节"
+        work.audit = (1..6).map { index ->
+            Audit().apply {
+                id = "audit-$index"
+                matchId = if (index == 1) "deleted-draft" else ""
+                actor = "测试操作者"
+                action = if (index == 1) "删除草稿" else "更新赛事"
+                detail = if (index == 1) longDetail else "更新记录 $index"
+                at = "2026-11-16T12:00:0${index}Z"
+            }
+        }
+        openWorkspace(work)
+        scrollToText("比赛总数")
+        organizerMatchStatuses.forEach { (_, label) ->
+            compose.onNode(
+                hasText(label) and hasAnySibling(hasText("1")) and
+                    hasAnyAncestor(hasTestTag("organizer-status-counts"))
+            ).assertIsDisplayed()
+        }
+        scrollToText("全部操作记录").performClick()
+        scrollToText("按场次筛选").performClick()
+        selectMenuOption("场次 deleted-")
+        scrollToText("按操作筛选").performClick()
+        selectMenuOption("删除草稿")
+        scrollToText(longDetail).assertIsDisplayed()
+        scrollToText("2026-11-16 20:00:01 · 测试操作者").assertIsDisplayed()
+    }
+
+    private fun openWorkspace(work: Workspace): OrganizerHttpFixture {
+        val fixture = OrganizerHttpFixture(workspace = work).also { servers += it }
+        val vm = model(fixture)
+        compose.setContent { CourtsideApp(true, vm) }
+        compose.runOnIdle { vm.signIn(fixture.url, "organizer", "test-password", true) }
+        compose.waitUntil(10000) { vm.ui.value.workspace?.tournament?.id == work.tournament.id && !vm.ui.value.busy }
+        return fixture
+    }
+
+    private fun scrollToText(text: String): SemanticsNodeInteraction {
+        compose.onNode(hasScrollToIndexAction()).performScrollToNode(hasText(text))
+        return compose.onNodeWithText(text)
+    }
+
+    private fun selectMenuOption(text: String) {
+        compose.onNode(hasText(text) and hasClickAction() and hasAnyAncestor(isPopup())).performClick()
+    }
+
     @Test fun accountValidationAndArchiveReasonsCoverBoundaryCases() {
         assertNull(refereeAccountError("ref_1.-", "1234567890"))
         assertNotNull(refereeAccountError("ab", "1234567890"))
@@ -328,13 +465,16 @@ private class OrganizerHttpFixture(
     private val failedWrites: Int = 0,
     private val failReads: Boolean = false,
     private val holdWrite: Boolean = false,
+    private val workspace: Workspace = Workspace().apply {
+        tournament = Tournament().apply { id = "isolated-tournament"; name = "测试赛事"; date = "2026-11-16" }
+    },
 ) : AutoCloseable {
     private val server = ServerSocket(0, 8, InetAddress.getByName("127.0.0.1"))
     val url = "http://127.0.0.1:${server.localPort}/api"
     val writes = AtomicInteger()
     val releaseWrite = CountDownLatch(if (holdWrite) 1 else 0)
     private val gson = Gson()
-    private val tournament = Tournament().apply { id = "isolated-tournament"; name = "测试赛事"; date = "2026-11-16" }
+    private val tournament = workspace.tournament
     init {
         thread(isDaemon = true, name = "organizer-http-fixture") {
             try {
@@ -361,7 +501,7 @@ private class OrganizerHttpFixture(
                         user = User().apply { id = "test-organizer"; name = "测试赛事组"; role = "ORGANIZER" }
                     })
                     else if (write) gson.toJson(tournament)
-                    else if (request[1].endsWith("/workspace")) gson.toJson(Workspace().apply { this.tournament = this@OrganizerHttpFixture.tournament })
+                    else if (request[1].endsWith("/workspace")) gson.toJson(workspace)
                     else if (request[1].endsWith("/tournaments")) gson.toJson(listOf(tournament))
                     else "[]"
                     val bytes = body.toByteArray(Charsets.UTF_8)

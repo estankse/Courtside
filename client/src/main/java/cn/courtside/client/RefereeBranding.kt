@@ -89,7 +89,7 @@ fun RefereeLaunchHost(content: @Composable () -> Unit) {
 
 /** The selected badge artwork is shared with the launcher and the system splash icon. */
 @Composable
-internal fun RefereeBrandMark(modifier: Modifier = Modifier) {
+internal fun CourtsideBrandMark(modifier: Modifier = Modifier) {
     Image(
         painter = painterResource(R.drawable.referee_brand_badge),
         contentDescription = null,
@@ -150,7 +150,7 @@ private fun RefereeLaunchCover(onContinue: () -> Unit) {
             if (wide) {
                 Row(verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(22.dp)) {
-                    RefereeBrandMark(Modifier.size(84.dp))
+                    CourtsideBrandMark(Modifier.size(84.dp))
                     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         Text("羽序", fontFamily = PlayerScript, fontSize = 48.sp, color = Paper)
                         Text("专注球场 · 掌握每一分", color = Paper, fontSize = 18.sp,
@@ -160,7 +160,7 @@ private fun RefereeLaunchCover(onContinue: () -> Unit) {
                 }
             } else {
                 Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
-                    RefereeBrandMark(Modifier.size(88.dp))
+                    CourtsideBrandMark(Modifier.size(88.dp))
                     Text("羽序", fontFamily = PlayerScript, fontSize = 58.sp, color = Paper)
                     Box(Modifier.width(44.dp).height(3.dp).background(Lime))
                     Text("专注球场\n掌握每一分", fontWeight = FontWeight.Black,

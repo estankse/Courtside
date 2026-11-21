@@ -565,19 +565,27 @@ fun ReviewDialog(
     onDismiss: () -> Unit,
     busy: Boolean = false,
     serverError: String? = null,
+    readOnly: Boolean = false,
     onReview: (Boolean, String) -> Unit,
 ) {
     if (m == null) return
     var returning by rememberSaveable(s.id) { mutableStateOf(false) }
     var reason by rememberSaveable(s.id) { mutableStateOf("") }
-    val pending = s.status == "PENDING_REVIEW"
+    val pending = s.status == "PENDING_REVIEW" && !readOnly
+    val title = when {
+        pending -> "核验比赛成绩"
+        s.status == "CONFIRMED" -> "正式成绩"
+        s.status == "RETURNED" -> "已退回的成绩"
+        else -> "提交详情"
+    }
     OrganizerFormDialog(
-        if (pending) "核验比赛成绩" else "正式成绩", onDismiss,
+        title, onDismiss,
         confirmLabel = if (pending) "确认正式成绩" else "完成",
         busy = busy, error = serverError,
         onConfirm = { if (pending) onReview(true, "") else onDismiss() },
     ) {
         OrganizerPlayers(m)
+        if (readOnly) OrganizerSubmissionRecordMetadata(s, m)
         Text("局胜 ${Scoring.wins(s.score, 0)} : ${Scoring.wins(s.score, 1)}", fontWeight = FontWeight.Bold, fontSize = 22.sp)
         Text("${if (s.winner == 0) m.sideA else m.sideB} 获胜", color = Lime)
         if (s.score.retirementWinner >= 0)
@@ -598,7 +606,7 @@ fun ReviewDialog(
             Text("退回更正", color = Rose)
         }
     }
-    if (returning) OrganizerReasonDialog(
+    if (pending && returning) OrganizerReasonDialog(
         "退回裁判更正", "原始提交会保留，裁判将收到原因并重新确认成绩。",
         busy, serverError, { returning = false }, reason, { reason = it },
     ) { onReview(false, it) }

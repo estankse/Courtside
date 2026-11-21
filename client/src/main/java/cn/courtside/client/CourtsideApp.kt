@@ -11,17 +11,20 @@ import androidx.compose.foundation.*
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.*
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.ui.*
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.*
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.*
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontStyle
@@ -47,6 +50,7 @@ fun CourtsideApp(organizer: Boolean, vm: CourtsideViewModel = viewModel()) {
     var dialog by rememberSaveable { mutableStateOf("") }
     var editedMatchJson by rememberSaveable { mutableStateOf("") }
     var reviewedJson by rememberSaveable { mutableStateOf("") }
+    val organizerHomeState = rememberSaveableStateHolder()
     val editedMatch = remember(editedMatchJson) {
         editedMatchJson.takeIf { it.isNotEmpty() }?.let { vm.repo.gson.fromJson(it, Match::class.java) }
     }
@@ -130,27 +134,12 @@ fun CourtsideApp(organizer: Boolean, vm: CourtsideViewModel = viewModel()) {
                     ) {
                         if (state.route != "home")
                             ActionIcon(Icons.Outlined.ArrowBack, "返回工作台", { vm.navigate("home") })
-                        else if (!organizer) RefereeBrandMark(Modifier.size(36.dp))
-                        else
-                            Box(
-                                Modifier.size(32.dp)
-                                    .background(
-                                        Lime,
-                                        CutCornerShape(topEnd = 10.dp, bottomStart = 10.dp),
-                                    ),
-                                contentAlignment = Alignment.Center,
-                            ) {
-                                Icon(
-                                    Icons.Outlined.SportsTennis,
-                                    null,
-                                    tint = Ink,
-                                    modifier = Modifier.size(21.dp),
-                                )
-                            }
+                        else CourtsideBrandMark(Modifier.size(36.dp))
                         Spacer(Modifier.width(10.dp))
                         Column(Modifier.weight(1f)) {
                             Text(
                                 if (state.route == "manage") "赛事资料"
+                                else if (state.route == "organizerAudit") "全部操作记录"
                                 else if (state.route == "detail") "比赛详情"
                                 else if (state.route == "result") "赛后回顾" else "羽序 COURTSIDE",
                                 fontWeight = FontWeight.Bold,
@@ -183,6 +172,7 @@ fun CourtsideApp(organizer: Boolean, vm: CourtsideViewModel = viewModel()) {
                     "score" -> ScoreScreen(state, vm)
                     "result" -> ResultScreen(state, vm)
                     "manage" -> ManagementScreen(state, vm, { dialog = "settings" })
+                    "organizerAudit" -> if (organizer) state.workspace?.let { OrganizerAuditScreen(it) }
                     "detail" ->
                         MatchDetail(
                             state,
@@ -195,19 +185,23 @@ fun CourtsideApp(organizer: Boolean, vm: CourtsideViewModel = viewModel()) {
                             { reviewedJson = vm.repo.gson.toJson(it) },
                         )
                     else ->
-                        if (organizer)
-                            OrganizerHome(
-                                state,
-                                tab,
-                                vm,
-                                { dialog = "tournament" },
-                                {
-                                    editedMatchJson = ""
-                                    dialog = "match"
-                                },
-                                { reviewedJson = vm.repo.gson.toJson(it) },
-                            )
-                        else RefereeHome(state, tab, vm) { tab = 1 }
+                        if (organizer) {
+                            organizerHomeState.SaveableStateProvider(
+                                "${vm.repo.owner}:${state.workspace?.tournament?.id.orEmpty()}"
+                            ) {
+                                OrganizerHome(
+                                    state,
+                                    tab,
+                                    vm,
+                                    { dialog = "tournament" },
+                                    {
+                                        editedMatchJson = ""
+                                        dialog = "match"
+                                    },
+                                    { reviewedJson = vm.repo.gson.toJson(it) },
+                                )
+                            }
+                        } else RefereeHome(state, tab, vm) { tab = 1 }
                 }
             }
         }
@@ -296,8 +290,7 @@ private fun LoginScreen(
         ) {
             item {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    if (organizer) Icon(Icons.Outlined.SportsTennis, null, Modifier.size(28.dp), tint = Lime)
-                    else RefereeBrandMark(Modifier.size(36.dp))
+                    CourtsideBrandMark(Modifier.size(36.dp))
                     Spacer(Modifier.width(10.dp))
                     Text("羽序", fontWeight = FontWeight.Black, fontSize = 23.sp)
                     Spacer(Modifier.weight(1f))
@@ -635,10 +628,14 @@ private fun OrganizerHome(
     onReview: (Submission) -> Unit,
 ) {
     val w = state.workspace
-    var filter by rememberSaveable { mutableStateOf("全部") }
+    var date by rememberSaveable { mutableStateOf("") }
+    var courtId by rememberSaveable { mutableStateOf("") }
+    var status by rememberSaveable { mutableStateOf("") }
     var choose by remember { mutableStateOf(false) }
+    val listState = key(tab) { rememberLazyListState() }
     LazyColumn(
         Modifier.fillMaxSize(),
+        state = listState,
         contentPadding = PaddingValues(start = 20.dp, end = 20.dp, bottom = 24.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp),
     ) {
@@ -741,13 +738,15 @@ private fun OrganizerHome(
                 }
             }
             item {
-                Stats(
-                    listOf(
-                        w.matches.size.toString() to "比赛总数",
-                        w.matches.count { it.status == "IN_PROGRESS" }.toString() to "正在进行",
-                        w.submissions.count { it.status == "PENDING_REVIEW" }.toString() to "等待核验",
-                    )
-                )
+                val counts = w.matches.groupingBy { it.status }.eachCount()
+                val overview = listOf(w.matches.size.toString() to "比赛总数") +
+                    organizerMatchStatuses.map { (status, label) -> (counts[status] ?: 0).toString() to label }
+                Column(
+                    modifier = Modifier.testTag("organizer-status-counts"),
+                    verticalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
+                    overview.chunked(3).forEach { Stats(it) }
+                }
             }
             item { SectionTitle("球场动态") }
             items(
@@ -759,8 +758,10 @@ private fun OrganizerHome(
                 OrganizerMatchCard(it, { vm.openMatch(it) })
             }
             if (w.matches.isEmpty()) item { EmptyState("赛程还未编排", "先在管理资料中添加参赛者、场地与裁判。") }
+            item {
+                SectionTitle("最近操作", "全部操作记录") { vm.navigate("organizerAudit") }
+            }
             if (w.audit.isNotEmpty()) {
-                item { SectionTitle("最近操作") }
                 item {
                     Panel {
                         w.audit
@@ -799,24 +800,20 @@ private fun OrganizerHome(
                     )
                 }
             }
-            item { FilterRow(listOf("全部", "草稿", "未开始", "进行中", "已完成"), filter) { filter = it } }
-            val shown =
-                w.matches.filter {
-                    when (filter) {
-                        "草稿" -> it.status == "DRAFT"
-                        "未开始" -> it.status in listOf("PUBLISHED", "ACCEPTED")
-                        "进行中" -> it.status == "IN_PROGRESS"
-                        "已完成" -> it.status == "FINISHED"
-                        else -> true
-                    }
-                }
-            shown
-                .groupBy { dateLabel(it.startsAt) }
-                .forEach { (date, ms) ->
-                    item { SectionTitle(date) }
-                    items(ms, key = { it.id }) { OrganizerMatchCard(it, { vm.openMatch(it) }) }
-                }
-            if (shown.isEmpty()) item { EmptyState("暂无符合条件的比赛", "切换分类，或新建一场比赛。") }
+            item {
+                OrganizerScheduleFilters(
+                    w, date, courtId, status,
+                    onDate = { date = it },
+                    onCourt = { courtId = it },
+                    onStatus = { status = it },
+                    onClear = {
+                        date = ""
+                        courtId = ""
+                        status = ""
+                    },
+                )
+            }
+            organizerSchedule(w, date, courtId, status) { vm.openMatch(it) }
         } else {
             item {
                 Text("成绩中心", fontSize = 28.sp, fontWeight = FontWeight.Black)
@@ -890,9 +887,10 @@ private fun MatchDetail(
     var cancel by rememberSaveable(m.id) { mutableStateOf(false) }
     var cancelReason by rememberSaveable(m.id) { mutableStateOf("") }
     var delete by rememberSaveable(m.id) { mutableStateOf(false) }
-    val s =
-        state.workspace?.submissions?.find { it.id == m.currentSubmissionId }
-            ?: state.feed.submissions.find { it.id == m.currentSubmissionId }
+    var showHistory by rememberSaveable(m.id) { mutableStateOf(false) }
+    var historySubmissionId by rememberSaveable(m.id) { mutableStateOf("") }
+    val history = organizerSubmissionHistory(state.workspace, m)
+    val s = history.find { isCurrentOrganizerSubmission(it, m) }
     LazyColumn(
         Modifier.fillMaxSize(),
         contentPadding = PaddingValues(20.dp),
@@ -946,6 +944,14 @@ private fun MatchDetail(
                     color = Soft,
                     fontSize = 10.sp,
                 )
+            }
+        }
+        if (m.status == "CANCELLED") {
+            item {
+                Panel(Modifier.fillMaxWidth()) {
+                    Text("取消原因", color = Soft, fontWeight = FontWeight.Bold)
+                    Text(m.cancelReason.ifBlank { "未记录取消原因" })
+                }
             }
         }
         if (m.returnReason.isNotBlank())
@@ -1061,6 +1067,29 @@ private fun MatchDetail(
                     fontSize = 11.sp,
                 )
             }
+        }
+        if (history.isNotEmpty()) {
+            item {
+                SectionTitle(
+                    "提交与核验历史 · ${history.size}",
+                    if (showHistory) "收起" else "展开",
+                ) { showHistory = !showHistory }
+            }
+            if (showHistory) {
+                items(history, key = { "history:${it.id}" }) { submission ->
+                    Panel(Modifier.fillMaxWidth()) {
+                        OrganizerSubmissionRecordMetadata(submission, m)
+                        OutlinedButton(onClick = { historySubmissionId = submission.id }) {
+                            Text("查看提交详情")
+                        }
+                    }
+                }
+            }
+        }
+    }
+    if (historySubmissionId.isNotEmpty()) {
+        history.find { it.id == historySubmissionId }?.let { submission ->
+            ReviewDialog(submission, m, { historySubmissionId = "" }, readOnly = true) { _, _ -> }
         }
     }
     if (toss)

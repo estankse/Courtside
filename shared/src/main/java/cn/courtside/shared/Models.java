@@ -56,7 +56,7 @@ public final class Models {
         deviceId = "",
         returnReason = "",
         cancelReason = "";
-    public String currentSubmissionId = "", updatedAt = "";
+    public String currentSubmissionId = "", updatedAt = "", scoreReceivedAt = "";
     public int scheduleVersion = 1, correctionRound = 0;
     public Rules rules = new Rules();
     public ScoreSession progress;

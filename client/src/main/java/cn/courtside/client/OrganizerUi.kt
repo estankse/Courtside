@@ -22,6 +22,8 @@ import androidx.compose.ui.window.DialogProperties
 import androidx.compose.ui.window.DialogWindowProvider
 import cn.courtside.shared.Models.*
 import cn.courtside.shared.Scoring
+import java.time.Instant
+import kotlinx.coroutines.delay
 
 /** Organizer presentation only: the referee's card and scoring controls stay unchanged. */
 internal fun organizerScoreLabel(match: Match): String {
@@ -201,7 +203,7 @@ internal fun OrganizerMatchMetadata(match: Match) {
         Text("比赛日期", color = Soft, fontSize = 14.sp)
         Text(dateLabel(match.startsAt))
         Text("预计时段", color = Soft, fontSize = 14.sp)
-        Text("${timeLabel(match.startsAt)} — ${timeLabel(match.endsAt)}")
+        Text(organizerMatchTimeRange(match))
         Text("执裁场地", color = Soft, fontSize = 14.sp)
         Text(match.court)
         Text("执裁裁判", color = Soft, fontSize = 14.sp)
@@ -227,33 +229,54 @@ internal fun OrganizerMatchCard(match: Match, onClick: () -> Unit) {
             if (winner >= 0) Text("${if (winner == 0) match.sideA else match.sideB} 获胜", fontSize = 14.sp)
             else Text("局胜 ${Scoring.wins(score, 0)} : ${Scoring.wins(score, 1)}", color = Soft, fontSize = 14.sp)
         }
-        Text("${timeLabel(match.startsAt)} — ${timeLabel(match.endsAt)} · ${match.court}", color = Soft, fontSize = 14.sp)
+        Text("${organizerMatchTimeRange(match)} · ${match.court}", color = Soft, fontSize = 14.sp)
         Text("裁判 ${match.refereeName}", color = Soft, fontSize = 14.sp)
     }
 }
 
 @Composable
-internal fun OrganizerScoreDetails(match: Match) {
-    val score = match.progress ?: return
+internal fun OrganizerScoreDetails(match: Match, refreshedAt: String = "", refreshFailed: Boolean = false) {
+    val score = match.progress
     Panel(Modifier.fillMaxWidth()) {
         Text(if (match.status == "IN_PROGRESS") "最近同步的比分" else "比赛结果", fontWeight = FontWeight.Bold)
-        Text("局胜 ${Scoring.wins(score, 0)} : ${Scoring.wins(score, 1)}", fontSize = 26.sp, color = Lime)
-        score.games.forEachIndexed { i, game ->
-            Text("第 ${i + 1} 局  ${game.a} – ${game.b}", fontSize = 16.sp)
+        if (score != null) OrganizerScoreSummary(match, score)
+        val receivedAt = remember(match.scoreReceivedAt) {
+            runCatching { Instant.parse(match.scoreReceivedAt) }.getOrNull()
         }
-        if (score.retirementWinner >= 0) {
-            Text("弃权结束 · ${score.retirementReason}", color = Rose, fontSize = 14.sp)
+        when {
+            score == null -> Text("尚未收到比分快照", color = Soft)
+            receivedAt == null -> Text("历史比分未记录上传时间", color = Soft)
+            else -> Text("比分最后上传 ${organizerRecordTime(match.scoreReceivedAt)}", color = Soft)
         }
-        if (score.rallies.isNotEmpty() ||
-            (match.status == "IN_PROGRESS" && Scoring.winner(score, match.rules) < 0)) {
-            Text("第 ${score.games.size + 1} 局（未封存） ${Scoring.points(score.rallies, 0)} – ${Scoring.points(score.rallies, 1)}",
-                color = Blue, fontSize = 16.sp)
+        if (match.status == "IN_PROGRESS" && receivedAt != null) {
+            var stale by remember(receivedAt) { mutableStateOf(!receivedAt.plusSeconds(30).isAfter(Instant.now())) }
+            LaunchedEffect(receivedAt) {
+                val remaining = receivedAt.plusSeconds(30).toEpochMilli() - System.currentTimeMillis()
+                if (remaining > 0) delay(remaining)
+                stale = true
+            }
+            if (stale) Text("超过 30 秒未收到新比分", color = Rose)
         }
-        val winner = Scoring.winner(score, match.rules)
-        if (winner >= 0) Text("${if (winner == 0) match.sideA else match.sideB} 获胜", color = Lime)
-        // This remains the existing object timestamp; accurate snapshot receipt time is C08.
-        Text("记录更新 ${timeLabel(match.updatedAt)}", color = Soft, fontSize = 12.sp)
+        if (refreshedAt.isNotBlank()) Text("页面上次刷新 ${organizerRecordTime(refreshedAt)}", color = Soft)
+        if (refreshFailed) Text("刷新失败，当前显示上次读取的数据", color = Rose)
     }
+}
+
+@Composable
+private fun OrganizerScoreSummary(match: Match, score: ScoreSession) {
+    Text("局胜 ${Scoring.wins(score, 0)} : ${Scoring.wins(score, 1)}", fontSize = 26.sp, color = Lime)
+    score.games.forEachIndexed { i, game ->
+        Text("第 ${i + 1} 局  ${game.a} – ${game.b}", fontSize = 16.sp)
+    }
+    if (score.retirementWinner >= 0) {
+        Text("弃权结束 · ${score.retirementReason}", color = Rose, fontSize = 14.sp)
+    }
+    val winner = Scoring.winner(score, match.rules)
+    if (score.rallies.isNotEmpty() || (match.status == "IN_PROGRESS" && winner < 0)) {
+        Text("第 ${score.games.size + 1} 局（未封存） ${Scoring.points(score.rallies, 0)} – ${Scoring.points(score.rallies, 1)}",
+            color = Blue, fontSize = 16.sp)
+    }
+    if (winner >= 0) Text("${if (winner == 0) match.sideA else match.sideB} 获胜", color = Lime)
 }
 
 @Composable
@@ -265,9 +288,10 @@ internal fun OrganizerReasonDialog(
     onDismiss: () -> Unit,
     reason: String,
     onReasonChange: (String) -> Unit,
+    enabled: Boolean = true,
     onConfirm: (String) -> Unit,
 ) {
-    OrganizerFormDialog(title, onDismiss, enabled = reason.isNotBlank(), busy = busy, error = error,
+    OrganizerFormDialog(title, onDismiss, enabled = enabled && reason.isNotBlank(), busy = busy, error = error,
         onConfirm = { onConfirm(reason) }) {
         Text(detail, color = Soft, fontSize = 14.sp)
         OrganizerInput(reason, "原因", onReasonChange, enabled = !busy)

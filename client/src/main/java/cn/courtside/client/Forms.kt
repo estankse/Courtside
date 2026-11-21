@@ -328,6 +328,10 @@ fun ManagementScreen(state: UiState, vm: CourtsideViewModel, onSettings: () -> U
     var account by rememberSaveable(w.tournament.id) { mutableStateOf(false) }
     var username by rememberSaveable(w.tournament.id) { mutableStateOf("") }
     var password by rememberSaveable(w.tournament.id) { mutableStateOf("") }
+    val pendingReferee = state.pendingRefereeJoins[w.tournament.id]
+    LaunchedEffect(pendingReferee?.id) {
+        if (pendingReferee != null) password = ""
+    }
     val archiveReason = archiveBlockReason(w)
     LazyColumn(
         Modifier.fillMaxSize(),
@@ -422,7 +426,7 @@ fun ManagementScreen(state: UiState, vm: CourtsideViewModel, onSettings: () -> U
         } else {
             item {
                 PrimaryButton(
-                    "创建裁判账号",
+                    if (pendingReferee == null) "创建裁判账号" else "加入已创建的裁判",
                     {
                         vm.clearOrganizerError()
                         account = true
@@ -502,30 +506,41 @@ fun ManagementScreen(state: UiState, vm: CourtsideViewModel, onSettings: () -> U
         )
     if (account)
         OrganizerFormDialog(
-            "创建并加入裁判",
+            if (pendingReferee == null) "创建并加入裁判" else "加入已创建的裁判",
             { account = false },
-            enabled = name.isNotBlank() && refereeAccountError(username, password) == null,
+            confirmLabel = if (pendingReferee == null) "保存" else "重试加入赛事",
+            enabled = w.tournament.status != "ARCHIVED" && (pendingReferee != null ||
+                name.isNotBlank() && refereeAccountError(username, password) == null),
             busy = state.busy, error = state.organizerError,
             onConfirm = {
-                vm.createReferee(username, name.trim(), password) { account = false }
+                if (pendingReferee == null) {
+                    vm.createReferee(username, name.trim(), password) { account = false; password = "" }
+                } else {
+                    vm.retryRefereeJoin(w.tournament.id) { account = false; password = "" }
+                }
             },
         ) {
-            OrganizerInput(name, "裁判姓名", { name = it }, !state.busy)
-            OrganizerInput(username, "登录账号（3～40位）", { username = it }, !state.busy,
-                error = if (username.isNotEmpty() && !username.matches(Regex("[a-zA-Z0-9_.-]{3,40}"))) "仅支持字母、数字、下划线、点、短横线，共3～40位" else null)
-            OutlinedTextField(
-                password,
-                { password = it },
-                label = { Text("初始密码（10～72位）") },
-                enabled = !state.busy,
-                isError = password.isNotEmpty() && (password.length !in 10..72 || password != password.trim()),
-                supportingText = { if (password.isNotEmpty() && (password.length !in 10..72 || password != password.trim())) Text("密码需为10～72位，首尾不能有空白") },
-                visualTransformation =
-                    androidx.compose.ui.text.input.PasswordVisualTransformation(),
-                modifier = Modifier.fillMaxWidth(),
-                singleLine = true,
-            )
-            Text("创建后将自动加入当前赛事，请将账号交给裁判本人。", color = Soft, fontSize = 11.sp)
+            if (pendingReferee != null) {
+                Text("裁判账号 ${pendingReferee.username} 已创建。", fontWeight = FontWeight.Bold)
+                Text("尚未确认加入当前赛事，可重试加入。", color = Soft)
+            } else {
+                OrganizerInput(name, "裁判姓名", { name = it }, !state.busy)
+                OrganizerInput(username, "登录账号（3～40位）", { username = it }, !state.busy,
+                    error = if (username.isNotEmpty() && !username.matches(Regex("[a-zA-Z0-9_.-]{3,40}"))) "仅支持字母、数字、下划线、点、短横线，共3～40位" else null)
+                val invalidPassword = password.isNotEmpty() && (password.length !in 10..72 || password != password.trim())
+                OutlinedTextField(
+                    password,
+                    { password = it },
+                    label = { Text("初始密码（10～72位）") },
+                    enabled = !state.busy,
+                    isError = invalidPassword,
+                    supportingText = { if (invalidPassword) Text("密码需为10～72位，首尾不能有空白") },
+                    visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation(),
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true,
+                )
+                Text("创建后将自动加入当前赛事，请将账号交给裁判本人。", color = Soft, fontSize = 11.sp)
+            }
         }
 }
 

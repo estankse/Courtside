@@ -46,6 +46,15 @@ internal fun organizerMatchDate(match: Match): String =
 internal fun organizerRecordTime(value: String): String =
     recordInstant(value)?.atZone(organizerZone)?.format(recordTimeFormat) ?: "未记录"
 
+internal fun organizerMatchTimeRange(match: Match): String {
+    val start = recordInstant(match.startsAt)?.atZone(organizerZone)
+    val end = recordInstant(match.endsAt)?.atZone(organizerZone)
+    val endDate = if (start != null && end != null && start.toLocalDate() != end.toLocalDate()) {
+        "${end.toLocalDate()} "
+    } else ""
+    return "${timeLabel(match.startsAt)} — $endDate${timeLabel(match.endsAt)}"
+}
+
 internal fun organizerSubmissionStatus(submission: Submission): String = when (submission.status) {
     "PENDING_REVIEW" -> "待核验"
     "CONFIRMED" -> "已确认"

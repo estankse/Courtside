@@ -34,11 +34,14 @@ data class UiState(
     val message: String? = null,
     val issue: String? = null,
     val lastSync: String = "尚未同步",
+    val organizerRefreshedAt: String = "",
     val pending: Int = 0,
     val organizerLoading: Boolean = false,
     val organizerLoaded: Boolean = false,
     val organizerLoadError: String? = null,
     val organizerError: String? = null,
+    val pendingRefereeJoins: Map<String, User> = emptyMap(),
+    val invalidReviewIds: Set<String> = emptySet(),
 )
 
 class CourtsideViewModel(application: Application) : AndroidViewModel(application) {
@@ -106,30 +109,49 @@ class CourtsideViewModel(application: Application) : AndroidViewModel(applicatio
         onSaved: () -> Unit,
         block: suspend () -> Unit,
     ) = viewModelScope.launch {
+        val login = repo.login?.takeIf { it.user.role == "ORGANIZER" } ?: return@launch
         if (_ui.value.busy) return@launch
         _ui.update { it.copy(busy = true, organizerError = null) }
         try {
             try {
-                block()
+                networkLock.withLock {
+                    if (repo.login !== login) return@launch
+                    block()
+                }
             } catch (e: Exception) {
                 if (e is CancellationException) throw e
+                if (repo.login !== login) return@launch
                 failure(e)
+                if (repo.login !== login) return@launch
                 val detail = e.message ?: "连接失败，请检查网络"
                 _ui.update {
                     it.copy(organizerError = if (e is ApiFailure || e is IllegalArgumentException)
                         detail else "未收到操作回执：$detail。请先刷新确认是否已保存，再决定是否重试。")
                 }
+                if (e is ApiFailure && e.code in setOf("STALE_SCHEDULE", "STATE_CONFLICT")) {
+                    refresh(false, waitForLock = true)
+                }
                 return@launch
             }
+            if (repo.login !== login) return@launch
             onSaved()
-            val refreshed = refresh(false)
-            message(if (refreshed) success else "$success；列表暂未刷新，请点击刷新重试")
+            val refreshed = refresh(false, waitForLock = true)
+            if (repo.login === login) {
+                message(if (refreshed) success else "$success；列表暂未刷新，请点击刷新重试")
+            }
         } finally {
-            _ui.update { it.copy(busy = false) }
+            if (repo.login === login) _ui.update { it.copy(busy = false) }
         }
     }
 
     private fun failure(e: Exception, visible: Boolean = true) {
+        if (repo.login?.user?.role == "ORGANIZER" && e is ApiFailure &&
+            e.status == 401 && e.code in setOf("TOKEN_EXPIRED", "UNAUTHENTICATED", "HTTP_401")
+        ) {
+            repo.updateLogin(null)
+            _ui.value = UiState(message = "登录已失效，请重新登录")
+            return
+        }
         val online = e is ApiFailure || e is IllegalArgumentException
         _ui.update {
             it.copy(
@@ -167,8 +189,12 @@ class CourtsideViewModel(application: Application) : AndroidViewModel(applicatio
             "请使用${if (organizer) "赛事组" else "裁判"}账号登录本客户端"
         }
         repo.updateLogin(login)
-        _ui.value = UiState(login = login)
-        refresh(true)
+        _ui.value = UiState(
+            login = login,
+            busy = true,
+            pendingRefereeJoins = if (organizer) repo.pendingRefereeJoins() else emptyMap(),
+        )
+        refresh(true, waitForLock = true)
     }
 
     fun logout() {
@@ -190,17 +216,22 @@ class CourtsideViewModel(application: Application) : AndroidViewModel(applicatio
 
     fun refreshNow() = viewModelScope.launch { refresh(true) }
 
-    private suspend fun refresh(visible: Boolean): Boolean {
-        if (!networkLock.tryLock()) return false
-        val accountKey = repo.owner
-        val organizer = repo.login?.user?.role == "ORGANIZER"
+    private suspend fun refresh(visible: Boolean, waitForLock: Boolean = false): Boolean {
+        val login = repo.login ?: return false
+        if (waitForLock) networkLock.lock() else if (!networkLock.tryLock()) return false
+        if (repo.login !== login) {
+            networkLock.unlock()
+            return false
+        }
+        val organizer = login.user.role == "ORGANIZER"
         if (organizer) _ui.update { it.copy(organizerLoading = true) }
         try {
-            val login = repo.login ?: return false
             if (login.user.role == "ORGANIZER") {
                 val tours =
                     repo.request("GET", "/tournaments", Array<Tournament>::class.java).toList()
+                if (repo.login !== login) return false
                 val refs = repo.request("GET", "/users/referees", Array<User>::class.java).toList()
+                if (repo.login !== login) return false
                 val selectedId =
                     _ui.value.workspace?.tournament?.id?.takeIf { id -> tours.any { it.id == id } }
                         ?: tours.firstOrNull()?.id
@@ -208,23 +239,22 @@ class CourtsideViewModel(application: Application) : AndroidViewModel(applicatio
                     selectedId?.let {
                         repo.request("GET", "/tournaments/$it/workspace", Workspace::class.java)
                     }
-                if (repo.owner != accountKey) return false
+                if (repo.login !== login) return false
                 repo.cache("tournaments", tours)
+                if (repo.login !== login) return false
                 if (work != null) repo.cache("workspace", work)
+                if (repo.login !== login) return false
                 _ui.update { old ->
-                    old.copy(
+                    updateOrganizerWorkspace(old, work).copy(
                         tournaments = tours,
                         referees = refs,
-                        workspace = work,
-                        selected = work?.matches?.find { it.id == old.selected?.id } ?: old.selected,
-                        organizerLoaded = true,
-                        organizerLoadError = null,
                     )
                 }
             } else {
                 val feed = repo.request("GET", "/me/matches", Feed::class.java)
-                if (repo.owner != accountKey) return false
+                if (repo.login !== login) return false
                 repo.cache("feed", feed)
+                if (repo.login !== login) return false
                 _ui.update { old ->
                     old.copy(
                         feed = feed,
@@ -232,7 +262,8 @@ class CourtsideViewModel(application: Application) : AndroidViewModel(applicatio
                         selected = feed.matches.find { it.id == old.selected?.id } ?: old.selected,
                     )
                 }
-                flushPending()
+                flushPending(login)
+                if (repo.login !== login) return false
                 val current = _ui.value
                 val score = current.score
                 if (
@@ -249,7 +280,9 @@ class CourtsideViewModel(application: Application) : AndroidViewModel(applicatio
                     )
                 }
             }
+            if (repo.login !== login) return false
             val pending = repo.dao.list(repo.owner, "PENDING").size
+            if (repo.login !== login) return false
             _ui.update {
                 it.copy(
                     online = true,
@@ -260,30 +293,54 @@ class CourtsideViewModel(application: Application) : AndroidViewModel(applicatio
             return true
         } catch (e: Exception) {
             if (e is CancellationException) throw e
-            if (repo.owner == accountKey) {
+            if (repo.login === login) {
                 failure(e, visible)
-                if (organizer) _ui.update {
+                if (organizer && repo.login === login) _ui.update {
                     it.copy(organizerLoaded = true, organizerLoadError = e.message ?: "加载失败，请重试")
                 }
             }
             return false
         } finally {
-            if (organizer) _ui.update { it.copy(organizerLoading = false) }
+            if (organizer && repo.login === login) _ui.update { it.copy(organizerLoading = false) }
             networkLock.unlock()
         }
     }
 
     fun chooseTournament(t: Tournament) = job {
-        val w = repo.request("GET", "/tournaments/${t.id}/workspace", Workspace::class.java)
-        repo.cache("workspace", w)
-        _ui.update { it.copy(workspace = w, organizerLoaded = true, organizerLoadError = null) }
+        val login = repo.login ?: return@job
+        networkLock.withLock {
+            if (repo.login !== login) return@withLock
+            val w = repo.request("GET", "/tournaments/${t.id}/workspace", Workspace::class.java)
+            if (repo.login !== login) return@withLock
+            repo.cache("workspace", w)
+            if (repo.login !== login) return@withLock
+            _ui.update {
+                updateOrganizerWorkspace(it, w).copy(online = true, issue = null)
+            }
+        }
+    }
+
+    private fun updateOrganizerWorkspace(state: UiState, workspace: Workspace?): UiState {
+        val selected = workspace?.matches?.find { it.id == state.selected?.id }
+        val changedTournament = state.workspace?.tournament?.id != workspace?.tournament?.id
+        return state.copy(
+            workspace = workspace,
+            selected = selected,
+            route = if (changedTournament || state.route == "detail" && selected == null) "home" else state.route,
+            organizerLoaded = true,
+            organizerLoadError = null,
+            organizerRefreshedAt = Instant.now().toString(),
+        )
     }
 
     fun createTournament(body: Map<String, Any>, onSaved: () -> Unit = {}) =
         organizerJob("赛事已创建，接下来添加参赛者、场地和裁判", onSaved) {
             val t = repo.request("POST", "/tournaments", Tournament::class.java, body)
             // The POST receipt is enough to close the form, even if the next GET fails.
-            _ui.update { it.copy(workspace = Workspace().apply { tournament = t }) }
+            _ui.update { old ->
+                updateOrganizerWorkspace(old, Workspace().apply { tournament = t })
+                    .copy(organizerRefreshedAt = "")
+            }
         }
 
     fun editTournament(body: Map<String, Any>, onSaved: () -> Unit = {}) =
@@ -318,6 +375,8 @@ class CourtsideViewModel(application: Application) : AndroidViewModel(applicatio
 
     fun createReferee(username: String, name: String, password: String, onSaved: () -> Unit = {}) =
         organizerJob("裁判账号已创建并加入赛事", onSaved) {
+            val tid = checkNotNull(_ui.value.workspace).tournament.id
+            check(tid !in _ui.value.pendingRefereeJoins) { "请先处理已创建的裁判账号" }
             val ref =
                 repo.request(
                     "POST",
@@ -325,14 +384,31 @@ class CourtsideViewModel(application: Application) : AndroidViewModel(applicatio
                     User::class.java,
                     mapOf("username" to username, "name" to name, "password" to password),
                 )
-            val tid = _ui.value.workspace!!.tournament.id
-            repo.request(
-                "POST",
-                "/tournaments/$tid/members",
-                User::class.java,
-                mapOf("userId" to ref.id),
-            )
+            updatePendingRefereeJoins(_ui.value.pendingRefereeJoins + (tid to ref))
+            joinCreatedReferee(tid, ref)
         }
+
+    fun retryRefereeJoin(tournamentId: String, onSaved: () -> Unit) =
+        organizerJob("裁判已加入赛事", onSaved) {
+            check(_ui.value.workspace?.tournament?.id == tournamentId) { "请回到原赛事重试加入" }
+            val ref = checkNotNull(_ui.value.pendingRefereeJoins[tournamentId]) { "没有待加入的裁判" }
+            joinCreatedReferee(tournamentId, ref)
+        }
+
+    private suspend fun joinCreatedReferee(tournamentId: String, ref: User) {
+        repo.request(
+            "POST",
+            "/tournaments/$tournamentId/members",
+            User::class.java,
+            mapOf("userId" to ref.id),
+        )
+        updatePendingRefereeJoins(_ui.value.pendingRefereeJoins - tournamentId)
+    }
+
+    private fun updatePendingRefereeJoins(pending: Map<String, User>) {
+        repo.savePendingRefereeJoins(pending)
+        _ui.update { it.copy(pendingRefereeJoins = pending) }
+    }
 
     fun deleteDraft(match: Match, onSaved: () -> Unit = {}) = organizerJob("草稿已删除", onSaved) {
         repo.request("DELETE", "/matches/${match.id}", Any::class.java)
@@ -378,16 +454,56 @@ class CourtsideViewModel(application: Application) : AndroidViewModel(applicatio
 
     fun review(submission: Submission, confirm: Boolean, reason: String = "", onSaved: () -> Unit = {}) =
         organizerJob(if (confirm) "成绩已确认为正式结果" else "已退回裁判更正", onSaved) {
-            repo.request(
-                "POST",
-                "/submissions/${submission.id}/${if (confirm) "confirm" else "return"}",
-                Submission::class.java,
-                mapOf("reason" to reason),
-            )
+            val workspace = _ui.value.workspace
+            val match = workspace?.matches?.find { it.id == submission.matchId }
+            val current = workspace?.submissions?.find { it.id == submission.id }
+            if (submission.id in _ui.value.invalidReviewIds || match?.status != "PENDING_REVIEW" || current == null ||
+                !isCurrentOrganizerSubmission(current, match)
+            ) throw ApiFailure(409, "STATE_CONFLICT", "该提交已核验或被更新，请查看最新成绩")
+            val receipt = try {
+                repo.request(
+                    "POST",
+                    "/submissions/${submission.id}/${if (confirm) "confirm" else "return"}",
+                    Submission::class.java,
+                    mapOf("reason" to reason),
+                )
+            } catch (e: ApiFailure) {
+                if (e.code == "STATE_CONFLICT") {
+                    _ui.update { it.copy(invalidReviewIds = it.invalidReviewIds + submission.id) }
+                }
+                throw e
+            }
+            // Update the open review immediately even if the next workspace refresh fails.
+            val reviewedMatch = repo.gson.fromJson(repo.gson.toJson(match), Match::class.java).apply {
+                if (confirm) {
+                    status = "FINISHED"
+                } else {
+                    status = "IN_PROGRESS"
+                    correctionRound++
+                    returnReason = receipt.reviewReason
+                }
+            }
+            _ui.update { state ->
+                val updated = Workspace().apply {
+                    tournament = workspace.tournament
+                    entrants = workspace.entrants
+                    courts = workspace.courts
+                    referees = workspace.referees
+                    matches = workspace.matches.map { if (it.id == match.id) reviewedMatch else it }
+                    submissions = workspace.submissions.map { if (it.id == receipt.id) receipt else it }
+                    audit = workspace.audit
+                }
+                state.copy(workspace = updated, selected = if (state.selected?.id == match.id) reviewedMatch else state.selected)
+            }
         }
 
     fun openMatch(match: Match) =
         viewModelScope.launch {
+            if (repo.login?.user?.role == "ORGANIZER") {
+                val latest = _ui.value.workspace?.matches?.find { it.id == match.id } ?: return@launch
+                _ui.update { it.copy(selected = latest, score = null, route = "detail") }
+                return@launch
+            }
             val score = repo.session(match.id)
             _ui.update {
                 it.copy(selected = match, score = score, route = "detail", entrance = null)
@@ -570,8 +686,9 @@ class CourtsideViewModel(application: Application) : AndroidViewModel(applicatio
             refresh(true)
         }
 
-    private suspend fun flushPending() {
+    private suspend fun flushPending(login: Login) {
         for (row in repo.dao.list(repo.owner, "PENDING")) {
+            if (repo.login !== login) return
             val s = repo.gson.fromJson(row.payload, ScoreSession::class.java)
             try {
                 val receipt =
@@ -582,6 +699,7 @@ class CourtsideViewModel(application: Application) : AndroidViewModel(applicatio
                         s,
                     )
                 repo.dao.delete(row.id)
+                if (repo.login !== login) return
                 _ui.update { old ->
                     old.copy(
                         selected =
@@ -600,6 +718,7 @@ class CourtsideViewModel(application: Application) : AndroidViewModel(applicatio
                     )
                 }
             } catch (e: ApiFailure) {
+                if (repo.login !== login) return
                 // Preserve rejected payloads for inspection; never discard a locally completed
                 // match.
                 message("待同步成绩：${e.message}")

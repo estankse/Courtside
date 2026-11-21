@@ -299,6 +299,7 @@ public class CompetitionService {
     m.sessionId = "";
     m.deviceId = "";
     m.progress = null;
+    m.scoreReceivedAt = "";
     m.currentSubmissionId = "";
     m.scheduleVersion = 1;
     m.correctionRound = 0;
@@ -331,6 +332,7 @@ public class CompetitionService {
     next.sessionId = "";
     next.deviceId = "";
     next.progress = null;
+    next.scoreReceivedAt = "";
     next.currentSubmissionId = "";
     bindDetails(next, t);
     if (!next.status.equals("DRAFT")) conflicts(next);
@@ -352,6 +354,15 @@ public class CompetitionService {
           409,
           "STATE_CONFLICT",
           "只能处理未开始的比赛");
+      // Older publish callers send no version. Cancel always requires the version being cancelled.
+      if (action.equals("cancel") || b.has("scheduleVersion")) {
+        JsonNode version = b.path("scheduleVersion");
+        check(
+            version.isIntegralNumber() && version.canConvertToInt() && version.intValue() == m.scheduleVersion,
+            409,
+            "STALE_SCHEDULE",
+            "赛程已更新，请刷新并核对最新安排");
+      }
       if (action.equals("publish")) {
         check(m.status.equals("DRAFT"), 409, "STATE_CONFLICT", "比赛已发布");
         bindDetails(m, t);
@@ -387,7 +398,9 @@ public class CompetitionService {
           case "cancel" -> "取消比赛";
           default -> action;
         };
-    audit(t.id, m.id, u, actionLabel, m.sideA + " vs " + m.sideB);
+    String detail = m.sideA + " vs " + m.sideB;
+    if (action.equals("cancel")) detail += "\n取消原因：" + m.cancelReason;
+    audit(t.id, m.id, u, actionLabel, detail);
     return m;
   }
 
@@ -418,6 +431,7 @@ public class CompetitionService {
     validateCorrection(m, s);
     if (m.progress == null || s.localSeq > m.progress.localSeq) {
       m.progress = s;
+      m.scoreReceivedAt = Store.now();
       save(m);
     }
     return m;
@@ -460,6 +474,8 @@ public class CompetitionService {
     m.currentSubmissionId = s.id;
     m.status = "PENDING_REVIEW";
     m.progress = score;
+    m.scoreReceivedAt = s.createdAt;
+    m.returnReason = "";
     save(m);
     audit(m.tournamentId, m.id, u, "提交成绩", m.sideA + " vs " + m.sideB);
     return s;

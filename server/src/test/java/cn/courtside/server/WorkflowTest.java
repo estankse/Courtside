@@ -158,6 +158,10 @@ class WorkflowTest {
             .getStatusCode()
             .value());
     ScoreSession s = completed(m);
+    assertTrue(m.scoreReceivedAt.isEmpty());
+    Match snapshot = ok("PUT", p + "/progress", s, ref.token, Match.class);
+    assertDoesNotThrow(() -> java.time.Instant.parse(snapshot.scoreReceivedAt));
+    assertEquals(snapshot.scoreReceivedAt, ok("PUT", p + "/progress", s, ref.token, Match.class).scoreReceivedAt);
     Submission first = ok("POST", p + "/submissions", s, ref.token, Submission.class);
     Submission retry = ok("POST", p + "/submissions", s, ref.token, Submission.class);
     assertEquals(first.id, retry.id);
@@ -175,11 +179,16 @@ class WorkflowTest {
     assertEquals(first.id, ok("POST", p + "/submissions", s, ref.token, Submission.class).id);
     assertEquals(409, call("PUT", p + "/progress", s, ref.token).getStatusCode().value());
     m = ok("GET", p, null, ref.token, Match.class);
+    assertEquals(first.createdAt, m.scoreReceivedAt);
+    assertEquals("请核对蓝方局分", m.returnReason);
     s.correctionRound = m.correctionRound;
     s.submissionId = UUID.randomUUID().toString();
     Submission second = ok("POST", p + "/submissions", s, ref.token, Submission.class);
     ok("POST", "/submissions/" + second.id + "/confirm", Map.of(), org.token, Submission.class);
-    assertEquals("FINISHED", ok("GET", p, null, ref.token, Match.class).status);
+    Match finished = ok("GET", p, null, ref.token, Match.class);
+    assertEquals("FINISHED", finished.status);
+    assertEquals(second.createdAt, finished.scoreReceivedAt);
+    assertTrue(finished.returnReason.isEmpty());
     assertEquals(409, call("PUT", p + "/progress", s, ref.token).getStatusCode().value());
     Workspace w =
         ok(
@@ -224,6 +233,30 @@ class WorkflowTest {
             .getStatusCode()
             .value());
     assertEquals(401, call("GET", "/me/matches", null, null).getStatusCode().value());
+  }
+
+  @Test
+  void cancelRequiresCurrentVersionAndAuditsTheReason() {
+    Match published = fixture();
+    String path = "/matches/" + published.id;
+    Match edited = ok("PUT", path, published, org.token, Match.class);
+    for (Map<String, ?> body : List.of(
+        Map.of("reason", "场馆关闭"),
+        Map.of("reason", "场馆关闭", "scheduleVersion", published.scheduleVersion))) {
+      var rejected = call("POST", path + "/cancel", body, org.token);
+      assertEquals(409, rejected.getStatusCode().value());
+      assertEquals("STALE_SCHEDULE", rejected.getBody().path("code").asText());
+    }
+    assertEquals("PUBLISHED", ok("GET", path, null, ref.token, Match.class).status);
+    Match cancelled = ok("POST", path + "/cancel",
+        Map.of("reason", "场馆关闭", "scheduleVersion", edited.scheduleVersion), org.token, Match.class);
+    assertEquals("CANCELLED", cancelled.status);
+    assertEquals("场馆关闭", cancelled.cancelReason);
+    assertEquals("CANCELLED", ok("GET", path, null, ref.token, Match.class).status);
+    Workspace workspace = ok("GET", "/tournaments/" + edited.tournamentId + "/workspace", null, org.token, Workspace.class);
+    assertEquals(1, workspace.audit.stream().filter(record ->
+        record.matchId.equals(edited.id) && record.action.equals("取消比赛") &&
+            record.detail.contains("取消原因：场馆关闭")).count());
   }
 
   @Test

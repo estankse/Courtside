@@ -5,6 +5,7 @@ import androidx.room.*
 import cn.courtside.shared.Models.*
 import com.google.gson.Gson
 import com.google.gson.JsonParser
+import com.google.gson.reflect.TypeToken
 import java.net.HttpURLConnection
 import java.net.URI
 import java.util.UUID
@@ -79,6 +80,16 @@ class Repository(context: Context) {
         login = value
         val storedLogin = value?.takeUnless { it.user.role == "ORGANIZER" }
         prefs.edit().putString("login", storedLogin?.let(gson::toJson)).apply()
+    }
+
+    fun pendingRefereeJoins(): Map<String, User> {
+        val stored = prefs.getString("$owner:pendingRefereeJoins", null) ?: return emptyMap()
+        val type = object : TypeToken<Map<String, User>>() {}.type
+        return runCatching { gson.fromJson<Map<String, User>>(stored, type) }.getOrNull().orEmpty()
+    }
+
+    fun savePendingRefereeJoins(pending: Map<String, User>) {
+        prefs.edit().putString("$owner:pendingRefereeJoins", pending.takeIf { it.isNotEmpty() }?.let(gson::toJson)).apply()
     }
 
     suspend fun <T> request(method: String, path: String, type: Class<T>, body: Any? = null): T =

@@ -21,8 +21,8 @@
 | DELETE | /matches/{id} | 仅删除未发布草稿 |
 | GET | /me/matches | 当前裁判的 Feed |
 | GET | /matches/{id} | 可见比赛详情 |
-| POST | /matches/{id}/publish | 发布草稿，检查时间冲突 |
-| POST | /matches/{id}/cancel | 未开始比赛取消，必填 reason |
+| POST | /matches/{id}/publish | 发布草稿，检查时间冲突；传入 scheduleVersion 时须匹配当前版本 |
+| POST | /matches/{id}/cancel | 取消未开始比赛，必填 reason 和当前 scheduleVersion；过期返回 STALE_SCHEDULE |
 | POST | /matches/{id}/accept | 接受任务，必填 scheduleVersion |
 | POST | /matches/{id}/start | 在线开始，必填 scheduleVersion、deviceId |
 | PUT | /matches/{id}/progress | ScoreSession 比分快照 |
@@ -34,6 +34,8 @@
 创建比赛使用 sideAId、sideBId、courtId、refereeId、startsAt、endsAt、round。服务端从本赛事资料中解析显示姓名，不接受客户端任意指定正式姓名或越赛事引用。
 
 ScoreSession 与 Game 的完整字段见 shared/Models.java。逐分 rallies 中 0 为蓝方、1 为红方；games 为已确认局；localSeq 是递增操作序号，撤销也增加序号。sessionId、deviceId、ownerId、correctionRound 与云端匹配才允许同步。
+
+Match.scoreReceivedAt 是云端接受最近一份新比分快照或正式提交的 UTC 时间。历史快照可能为空。核验、退回及重复上传不会推进此时间。
 
 正式提交的 submissionId 在首次排队时生成；同一编号同一内容返回原回执，不重复改变状态。相同编号不同内容返回409。退回增加 correctionRound，重新提交使用新编号；迟到的原提交重试可返回原回执，但不会重新生效。
 

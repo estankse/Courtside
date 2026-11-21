@@ -457,6 +457,176 @@ class OrganizerUiTest {
         work.matches[0].status = "FINISHED"
         assertNull(archiveBlockReason(work))
     }
+
+    @Test fun expiredOrganizerLoginReturnsToLoginAndKeepsCachedWorkspace() {
+        val expired = java.util.concurrent.atomic.AtomicBoolean(false)
+        val fixture = OrganizerHttpFixture(responseOverride = { _, path ->
+            if (expired.get() && path.endsWith("/tournaments"))
+                401 to mapOf("code" to "TOKEN_EXPIRED", "message" to "expired")
+            else null
+        }).also { servers += it }
+        val vm = model(fixture)
+        compose.setContent { CourtsideApp(true, vm) }
+        compose.runOnIdle { vm.signIn(fixture.url, "organizer", "test-password", true) }
+        compose.waitUntil(10000) { vm.ui.value.workspace != null && !vm.ui.value.busy }
+        val cachedOwner = vm.repo.owner
+        expired.set(true)
+        compose.runOnIdle { vm.refreshNow() }
+        compose.waitUntil(10000) { vm.ui.value.login == null }
+        compose.onNodeWithText("登录已失效，请重新登录").performScrollTo().assertIsDisplayed()
+        assertNotNull(kotlinx.coroutines.runBlocking { vm.repo.dao.get("$cachedOwner:workspace") })
+        expired.set(false)
+        compose.runOnIdle { vm.signIn(fixture.url, "organizer", "test-password", true) }
+        compose.waitUntil(10000) { vm.ui.value.workspace != null && !vm.ui.value.busy }
+    }
+
+    @Test fun retryJoinsCreatedRefereeWithoutSendingAnotherCreate() {
+        val creates = AtomicInteger()
+        val joins = AtomicInteger()
+        val created = User().apply { id = "new-ref"; username = "newref"; name = "新裁判" }
+        val fixture = OrganizerHttpFixture(responseOverride = { method, path ->
+            when {
+                method == "POST" && path.endsWith("/users/referees") -> {
+                    creates.incrementAndGet()
+                    200 to created
+                }
+                method == "POST" && path.endsWith("/members") ->
+                    if (joins.incrementAndGet() == 1) 400 to mapOf("code" to "VALIDATION", "message" to "测试加入失败")
+                    else 200 to created
+                else -> null
+            }
+        }).also { servers += it }
+        val vm = model(fixture)
+        compose.setContent { CourtsideApp(true, vm) }
+        compose.runOnIdle { vm.signIn(fixture.url, "organizer", "test-password", true) }
+        compose.waitUntil(10000) { vm.ui.value.workspace != null && !vm.ui.value.busy }
+        val id = vm.ui.value.workspace!!.tournament.id
+        compose.runOnIdle { vm.createReferee("newref", "新裁判", "test-password") }
+        compose.waitUntil(10000) { vm.ui.value.pendingRefereeJoins[id] != null && !vm.ui.value.busy }
+        assertEquals(created.id, vm.ui.value.pendingRefereeJoins[id]?.id)
+        compose.runOnIdle { vm.logout() }
+        compose.runOnIdle { vm.signIn(fixture.url, "organizer", "test-password", true) }
+        compose.waitUntil(10000) { vm.ui.value.workspace?.tournament?.id == id && !vm.ui.value.busy }
+        assertEquals(created.id, vm.ui.value.pendingRefereeJoins[id]?.id)
+        compose.runOnIdle { vm.retryRefereeJoin(id) {} }
+        compose.waitUntil(10000) { vm.ui.value.pendingRefereeJoins[id] == null && !vm.ui.value.busy }
+        assertEquals(1, creates.get())
+        assertEquals(2, joins.get())
+        assertTrue(vm.repo.pendingRefereeJoins().isEmpty())
+    }
+
+    @Test fun tournamentSwitchKeepsNewWorkspaceAfterPreviousRefresh() {
+        val a = Workspace().apply { tournament = Tournament().apply { id = "tour-a"; name = "赛事 A" } }
+        val b = Workspace().apply { tournament = Tournament().apply { id = "tour-b"; name = "赛事 B" } }
+        val refreshStarted = CountDownLatch(1)
+        val releaseRefresh = CountDownLatch(1)
+        val hold = java.util.concurrent.atomic.AtomicBoolean(false)
+        val fixture = OrganizerHttpFixture(responseOverride = { _, path ->
+            when {
+                path.endsWith("/tournaments") -> 200 to listOf(a.tournament, b.tournament)
+                path.endsWith("/tour-a/workspace") -> {
+                    if (hold.get()) {
+                        refreshStarted.countDown()
+                        releaseRefresh.await(8, TimeUnit.SECONDS)
+                    }
+                    200 to a
+                }
+                path.endsWith("/tour-b/workspace") -> 200 to b
+                else -> null
+            }
+        }).also { servers += it }
+        val vm = model(fixture)
+        compose.setContent { CourtsideApp(true, vm) }
+        compose.runOnIdle { vm.signIn(fixture.url, "organizer", "test-password", true) }
+        compose.waitUntil(10000) { vm.ui.value.workspace?.tournament?.id == a.tournament.id && !vm.ui.value.busy }
+        hold.set(true)
+        try {
+            compose.runOnIdle { vm.refreshNow() }
+            assertTrue(refreshStarted.await(8, TimeUnit.SECONDS))
+            compose.runOnIdle { vm.chooseTournament(b.tournament) }
+        } finally {
+            releaseRefresh.countDown()
+        }
+        compose.waitUntil(10000) { vm.ui.value.workspace?.tournament?.id == b.tournament.id && !vm.ui.value.busy }
+        val cached = kotlinx.coroutines.runBlocking { vm.repo.cached("workspace", Workspace::class.java) }
+        assertEquals(b.tournament.id, cached?.tournament?.id)
+    }
+
+    @Test fun refreshedReviewBecomesReadOnlyAndRetirementIsExplicit() {
+        val match = scoringMatch().apply {
+            status = "PENDING_REVIEW"
+            currentSubmissionId = "review"
+        }
+        val submission = Submission().apply {
+            id = "review"; matchId = match.id; winner = 0
+            score.retirementWinner = 0
+            score.retirementReason = "对方弃权"
+        }
+        val changed = java.util.concurrent.atomic.AtomicBoolean(false)
+        val tournament = Tournament().apply { id = "review-tour"; name = "核验测试" }
+        val fixture = OrganizerHttpFixture(responseOverride = { _, path ->
+            when {
+                path.endsWith("/tournaments") -> 200 to listOf(tournament)
+                path.endsWith("/workspace") -> synchronized(match) {
+                    if (changed.get()) { match.status = "FINISHED"; submission.status = "CONFIRMED" }
+                    200 to Workspace().apply {
+                        this.tournament = tournament
+                        matches = listOf(match)
+                        submissions = listOf(submission)
+                    }
+                }
+                else -> null
+            }
+        }).also { servers += it }
+        val vm = model(fixture)
+        compose.setContent { CourtsideApp(true, vm) }
+        compose.runOnIdle { vm.signIn(fixture.url, "organizer", "test-password", true) }
+        compose.waitUntil(10000) { vm.ui.value.workspace != null && !vm.ui.value.busy }
+        compose.onNodeWithText("成绩").performClick()
+        scrollToText("弃权结束 · ${match.sideA} 获胜").performClick()
+        compose.onNodeWithText("确认正式成绩").assertIsDisplayed()
+        changed.set(true)
+        compose.runOnIdle { vm.refreshNow() }
+        compose.waitUntil(10000) { vm.ui.value.workspace?.matches?.firstOrNull()?.status == "FINISHED" }
+        compose.onNodeWithText("确认正式成绩").assertDoesNotExist()
+        compose.onNodeWithText("退回更正").assertDoesNotExist()
+        assertEquals(0, fixture.writes.get())
+    }
+
+    @Test fun crossDayReturnDetailShowsSnapshotAgeAndClearsOldReturnPromptAfterResubmit() {
+        val match = scoringMatch().apply {
+            round = "跨日场次"
+            startsAt = "2026-11-16T15:45:00Z"
+            endsAt = "2026-11-16T16:30:00Z"
+            returnReason = "请核对现场记录"
+            scoreReceivedAt = "2026-11-16T15:50:00Z"
+        }
+        val submittedAgain = java.util.concurrent.atomic.AtomicBoolean(false)
+        val a = Tournament().apply { id = "overnight"; name = "跨日测试赛事" }
+        val fixture = OrganizerHttpFixture(responseOverride = { _, path ->
+            when {
+                path.endsWith("/tournaments") -> 200 to listOf(a)
+                path.endsWith("/workspace") -> {
+                    if (submittedAgain.get()) match.status = "PENDING_REVIEW"
+                    200 to Workspace().apply { tournament = a; matches = listOf(match) }
+                }
+                else -> null
+            }
+        }).also { servers += it }
+        val vm = model(fixture)
+        compose.setContent { CourtsideApp(true, vm) }
+        compose.runOnIdle { vm.signIn(fixture.url, "organizer", "test-password", true) }
+        compose.waitUntil(10000) { vm.ui.value.workspace != null && !vm.ui.value.busy }
+        scrollToText(match.round).performClick()
+        scrollToText("23:45 — 2026-11-17 00:30").assertIsDisplayed()
+        scrollToText("已退回，等待裁判重提").assertIsDisplayed()
+        scrollToText("比分最后上传 2026-11-16 23:50:00").assertIsDisplayed()
+        scrollToText("超过 30 秒未收到新比分").assertIsDisplayed()
+        submittedAgain.set(true)
+        compose.runOnIdle { vm.refreshNow() }
+        compose.waitUntil(10000) { vm.ui.value.selected?.status == "PENDING_REVIEW" }
+        compose.onNodeWithText("已退回，等待裁判重提").assertDoesNotExist()
+    }
 }
 
 @Composable private fun TextForTest(text: String) { androidx.compose.material3.Text(text) }
@@ -468,6 +638,7 @@ private class OrganizerHttpFixture(
     private val workspace: Workspace = Workspace().apply {
         tournament = Tournament().apply { id = "isolated-tournament"; name = "测试赛事"; date = "2026-11-16" }
     },
+    private val responseOverride: (String, String) -> Pair<Int, Any>? = { _, _ -> null },
 ) : AutoCloseable {
     private val server = ServerSocket(0, 8, InetAddress.getByName("127.0.0.1"))
     val url = "http://127.0.0.1:${server.localPort}/api"
@@ -495,7 +666,9 @@ private class OrganizerHttpFixture(
                     val number = if (write) writes.incrementAndGet() else 0
                     if (write && holdWrite) releaseWrite.await(10, TimeUnit.SECONDS)
                     val failure = !loginRequest && ((write && number <= failedWrites) || (!write && failReads))
-                    val body = if (failure) """{"code":"VALIDATION","message":"测试保存失败，请重试"}"""
+                    val override = responseOverride(request[0], request[1])
+                    val body = if (override != null) gson.toJson(override.second)
+                    else if (failure) """{"code":"VALIDATION","message":"测试保存失败，请重试"}"""
                     else if (loginRequest) gson.toJson(Login().apply {
                         token = "isolated-test-token"
                         user = User().apply { id = "test-organizer"; name = "测试赛事组"; role = "ORGANIZER" }
@@ -505,7 +678,7 @@ private class OrganizerHttpFixture(
                     else if (request[1].endsWith("/tournaments")) gson.toJson(listOf(tournament))
                     else "[]"
                     val bytes = body.toByteArray(Charsets.UTF_8)
-                    val status = if (failure) "400 Bad Request" else "200 OK"
+                    val status = if (override != null) "${override.first} Reply" else if (failure) "400 Bad Request" else "200 OK"
                     socket.getOutputStream().apply {
                         write("HTTP/1.1 $status\r\nContent-Type: application/json; charset=UTF-8\r\nContent-Length: ${bytes.size}\r\nConnection: close\r\n\r\n".toByteArray())
                         write(bytes); flush()
